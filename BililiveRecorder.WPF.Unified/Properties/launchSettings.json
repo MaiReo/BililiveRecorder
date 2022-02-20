@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "BililiveRecorder.WPF": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}

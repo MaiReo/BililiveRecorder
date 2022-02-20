@@ -29,6 +29,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BililiveRecorder.ToolBox", 
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BililiveRecorder.Flv.Tests", "test\BililiveRecorder.Flv.Tests\BililiveRecorder.Flv.Tests.csproj", "{32E554B1-0ECC-4145-85B8-3FC128FEBEA1}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BililiveRecorder.WPF", "BililiveRecorder.WPF.Unified\BililiveRecorder.WPF.csproj", "{DE2F8D50-26DE-4CA6-802E-58D8726B29B5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -63,6 +65,10 @@ Global
 		{32E554B1-0ECC-4145-85B8-3FC128FEBEA1}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{32E554B1-0ECC-4145-85B8-3FC128FEBEA1}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{32E554B1-0ECC-4145-85B8-3FC128FEBEA1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DE2F8D50-26DE-4CA6-802E-58D8726B29B5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DE2F8D50-26DE-4CA6-802E-58D8726B29B5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DE2F8D50-26DE-4CA6-802E-58D8726B29B5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DE2F8D50-26DE-4CA6-802E-58D8726B29B5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

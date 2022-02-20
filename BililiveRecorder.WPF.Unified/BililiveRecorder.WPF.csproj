@@ -1,0 +1,152 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net6.0-windows10.0.22000.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Copyright>Copyright © 2018 - 2021 Genteure, 2022 MaiReo</Copyright>
+    <SupportedOSPlatformVersion>10.0.18362.0</SupportedOSPlatformVersion>
+    <LangVersion>latest</LangVersion>
+    <ApplicationIcon>ico.ico</ApplicationIcon>
+    <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyInformationalVersionAttribute>false</GenerateAssemblyInformationalVersionAttribute>
+    <GenerateAssemblyVersionAttribute>false</GenerateAssemblyVersionAttribute>
+    <IncludePackageReferencesDuringMarkupCompilation>true</IncludePackageReferencesDuringMarkupCompilation>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Autofac" Version="6.*" />
+    <PackageReference Include="Autofac.Extensions.DependencyInjection" Version="7.*" />
+    <PackageReference Include="CliWrap" Version="3.4.*" />
+    <PackageReference Include="HardCodet.NotifyIcon.Wpf" Version="1.1.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="6.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="6.0.*" />
+    <PackageReference Include="ModernWpfUI" Version="0.9.*" />
+    <PackageReference Include="Serilog.Enrichers.Process" Version="2.*" />
+    <PackageReference Include="Serilog.Enrichers.Thread" Version="3.1.*" />
+    <PackageReference Include="Serilog.Exceptions" Version="8.1.*" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="4.2.0" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="1.1.*" />
+    <PackageReference Include="Serilog.Sinks.Async" Version="1.5.*" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="4.0.*" />
+    <PackageReference Include="Serilog.Sinks.File" Version="5.0.*" />
+    <PackageReference Include="WPFLocalizeExtension" Version="3.9.*" />
+    <PackageReference Include="GitVersion.MsBuild" Version="5.*">
+      <PrivateAssets>All</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Configuration)'=='Debug'">
+    <PackageReference Include="Serilog.Sinks.Debug" Version="2.0.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BililiveRecorder.Core\BililiveRecorder.Core.csproj" />
+    <ProjectReference Include="..\BililiveRecorder.ToolBox\BililiveRecorder.ToolBox.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="ico.ico">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Resource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Properties\Strings.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Strings.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Strings.resx">
+      <LastGenOutput>Strings.Designer.cs</LastGenOutput>
+      <Generator>PublicResXFileCodeGenerator</Generator>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="lib\ffmpeg-arm64.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="lib\miniffmpeg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Page Update="Pages\AdvancedSettingsPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\AddRoomCard.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\AddRoomFailedDialog.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\AutoFixProgressDialog.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\CloseWindowConfirmDialog.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\DeleteRoomConfirmDialog.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\LogPanel.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\PerRoomSettingsDialog.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\RoomCard.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\SettingWithDefault.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\TaskbarIconControl.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Controls\WorkDirectorySelectorDialog.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Pages\AboutPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Pages\AnnouncementPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Pages\RoomListPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Pages\RootPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Pages\SettingsPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Pages\ToolboxAutoFixPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Pages\ToolboxDanmakuMergerPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Pages\ToolboxRemuxPage.xaml">
+      <SubType>Designer</SubType>
+    </Page>
+    <Page Update="Resources\ConverterResources.xaml">
+      <SubType>Designer</SubType>
+      <Generator>XamlIntelliSenseFileGenerator</Generator>
+    </Page>
+    <Page Update="Resources\IconResources.xaml">
+      <SubType>Designer</SubType>
+      <Generator>XamlIntelliSenseFileGenerator</Generator>
+    </Page>
+  </ItemGroup>
+
+</Project>

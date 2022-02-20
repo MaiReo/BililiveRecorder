@@ -264,3 +264,4 @@ __pycache__/
 BililiveRecorder.Cli/Properties/launchSettings.json
 
 **/*.received.*
+.DS_Store

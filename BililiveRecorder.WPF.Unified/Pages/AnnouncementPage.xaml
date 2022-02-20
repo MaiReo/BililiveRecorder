@@ -1,0 +1,41 @@
+<ui:Page
+    x:Class="BililiveRecorder.WPF.Pages.AnnouncementPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+    xmlns:ui="http://schemas.modernwpf.com/2019"
+    xmlns:l="https://github.com/XAMLMarkupExtensions/WPFLocalizationExtension"
+    l:LocalizeDictionary.DesignCulture=""
+    l:ResxLocalizationProvider.DefaultAssembly="BililiveRecorder.WPF"
+    l:ResxLocalizationProvider.DefaultDictionary="Strings"
+    xmlns:local="clr-namespace:BililiveRecorder.WPF.Pages" 
+    xmlns:models="clr-namespace:BililiveRecorder.WPF.Models"
+    d:DataContext="{d:DesignInstance Type=models:AnnouncementDataModel}"
+    mc:Ignorable="d" 
+    d:DesignHeight="600" d:DesignWidth="900">
+    <Page.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Page.Resources>
+    <Grid Margin="5">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Button HorizontalAlignment="Right" Margin="5,0" x:Name="RefreshButton" Click="Button_Click" ToolTip="{Binding Path=CacheTime}" MouseRightButtonUp="Button_MouseRightButtonUp">
+            <StackPanel Orientation="Horizontal">
+                <ui:PathIcon Style="{StaticResource PathIconDataRefresh}" VerticalAlignment="Center"/>
+                <TextBlock Text="{l:Loc AnnouncementPage_RefreshButton}" Margin="5,0,0,0"/>
+            </StackPanel>
+        </Button>
+        <ContentControl Margin="5" Grid.Row="1" x:Name="Container" Content="{Binding Path=Content}"/>
+       
+        <StackPanel x:Name="Loading" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding Path=Loading, Converter={StaticResource BoolToVis}}">
+            <ui:ProgressRing IsActive="True" Width="80" Height="80" Margin="5"/>
+            <TextBlock TextAlignment="Center" FontSize="18" Text="Loading……"/>
+        </StackPanel>
+        <TextBlock x:Name="Error" Grid.Row="1" FontSize="20" Text="{l:Loc AnnouncementPage_FetchFailed}"
+                   HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"
+                   Foreground="{DynamicResource SystemControlErrorTextForegroundBrush}"/>
+    </Grid>
+</ui:Page>
