@@ -35,15 +35,29 @@ See [rec.danmuji.org](https://rec.danmuji.org) (in Chinese)
 
 ## Develop & Build
 
-Visual Studio 2019 with .NET 5 is recommended, though any other IDE should work too.
+Visual Studio 2022 with .NET 6 is recommended
 
 Project | Target | Note
 :---:|:---:|:---:
+BililiveRecorder.WPF.Unified | .NET 6 | Windows only GUI
 BililiveRecorder.WPF | .NET Framework 4.7.2 | Windows only GUI
 BililiveRecorder.Cli | .NET 5 | Cross-platform
 BililiveRecorder.ToolBox | .NET Standard 2.0 | library used by WPF & Cli
 BililiveRecorder.Core | .NET Standard 2.0 | Main recording logic
 BililiveRecorder.Flv | .NET Standard 2.0 | Data processing logic
+
+### WARNING
+- I Just ported required functions from `BililiveRecorder.WPF` to `BililiveRecorder.WPF.Unified`
+because I want to run it on Mac mini(2020) via Parallels Desktop
+- Not all of ported functions has been tested and passed.
+- CLI mode via GUI might not be functionally.
+- NOT ported yet:
+    - prevent system power mode switching to S3
+    - Open website link via browser
+- DISABLED:
+    - `AnnouncementPage`: Remote code execution issue was found.
+    - `Link` Menu and `Sponsor` Menu: Open website link via browser not implemented
+
 
 ## Versioning
 
@@ -54,3 +68,4 @@ This project does not follow semantic versioning, no source code compatibility i
 - [Adobe Flash Video File Format Specification 10.1.2.01.pdf](https://www.adobe.com/content/dam/acom/en/devnet/flv/video_file_format_spec_v10_1.pdf)
 - [coreyauger/flv-streamer-2-file](https://github.com/coreyauger/flv-streamer-2-file) Used as a reference in the early stages of development
 - [zyzsdy/biliroku](https://github.com/zyzsdy/biliroku) - (probably) first BiliBili stream recording tool.
+- [2Mundos/FFmpeg-windows-aarch64](https://github.com/2Mundos/FFmpeg-windows-aarch64) - ffmpeg for windows-arm64.
