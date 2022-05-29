@@ -87,7 +87,7 @@ namespace BililiveRecorder.Cli
                 if (isInCluster)
                 {
                     logToFile = false;
-                    Log.Logger.Warning("Kubernetes detected. Logging to file is disabled.");
+                    Log.Warning("Kubernetes detected. Logging to file is disabled.");
                 }
             }
             catch
@@ -132,7 +132,7 @@ namespace BililiveRecorder.Cli
                 if (isInCluster)
                 {
                     logToFile = false;
-                    Log.Logger.Warning("Kubernetes detected. Logging to file is disabled.");
+                    Log.Warning("Kubernetes detected. Logging to file is disabled.");
                 }
             }
             catch
