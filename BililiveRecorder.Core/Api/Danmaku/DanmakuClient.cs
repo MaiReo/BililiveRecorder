@@ -50,7 +50,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
             await this.semaphoreSlim.WaitAsync().ConfigureAwait(false);
             try
             {
-                this.danmakuStream?.Dispose();
+                this.danmakuStream?.DisposeAsync().ConfigureAwait(false);
                 this.danmakuStream = null;
 
                 this.timer.Stop();
@@ -95,7 +95,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
                 if (cancellationToken.IsCancellationRequested)
                 {
                     tcp.Dispose();
-                    this.danmakuStream.Dispose();
+                    await this.danmakuStream.DisposeAsync().ConfigureAwait(false);
                     this.danmakuStream = null;
                     return;
                 }

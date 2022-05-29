@@ -14,6 +14,7 @@ namespace BililiveRecorder.ToolBox.Tool.DanmakuStartTime
 
         public async Task<CommandResponse<DanmakuStartTimeResponse>> Handle(DanmakuStartTimeRequest request, CancellationToken cancellationToken, ProgressCallback? progress)
         {
+            await Task.Yield();
             List<DanmakuStartTimeResponse.DanmakuStartTime> result = new();
 
             try

@@ -55,7 +55,7 @@ namespace BililiveRecorder.WPF.Controls
             {
                 try
                 {
-                    Process.Start("https://live.bilibili.com/" + r.RoomConfig.RoomId);
+                    Process.Start("explorer.exe", "https://live.bilibili.com/" + r.RoomConfig.RoomId);
                 }
                 catch (Exception) { }
             }

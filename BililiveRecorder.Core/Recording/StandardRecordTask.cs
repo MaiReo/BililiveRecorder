@@ -141,7 +141,7 @@ namespace BililiveRecorder.Core.Recording
             finally
             {
                 this.timer.Stop();
-                stream.Dispose();
+                await stream.DisposeAsync().ConfigureAwait(false);
                 await writer.CompleteAsync(exception).ConfigureAwait(false);
             }
         }

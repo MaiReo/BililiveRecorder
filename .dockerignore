@@ -1,0 +1,4 @@
+BililiveRecorder.WPF/
+BililiveRecorder.WPF.Unified/
+test/
+Dockerfile.GithubActions

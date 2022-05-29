@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using BililiveRecorder.Core;
 using BililiveRecorder.WPF.Controls;
 using BililiveRecorder.WPF.Models;
@@ -30,13 +31,7 @@ namespace BililiveRecorder.WPF.Pages
                 RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
 
         private static readonly IRoom?[] NullRoom = new IRoom?[] { null };
-        private static readonly KeyIndexMappingReadOnlyList NullRoomWithMapping;
-
-        static RoomListPage()
-        {
-            NullRoomWithMapping = new KeyIndexMappingReadOnlyList(NullRoom);
-        }
-
+        private static readonly KeyIndexMappingReadOnlyList NullRoomWithMapping = new KeyIndexMappingReadOnlyList(NullRoom);
         private readonly StartupOptions startupOptions;
         private readonly IRecorder recorder;
         private readonly ILogger logger;
@@ -46,7 +41,6 @@ namespace BililiveRecorder.WPF.Pages
 #if DEBUG
         public RoomListPage() : this(new(), null)
         {
-
         }
 #endif
         public RoomListPage(StartupOptions startupOptions, IRecorder recorder, ILogger<RoomListPage>? logger = null)
@@ -321,7 +315,7 @@ namespace BililiveRecorder.WPF.Pages
         {
             try
             {
-                var logPath = Path.Combine(Path.GetDirectoryName(typeof(RoomListPage).Assembly.Location), "logs");
+                var logPath = Path.Combine(AppContext.BaseDirectory, "logs");
                 Process.Start("explorer.exe", logPath);
             }
             catch (Exception)
@@ -336,11 +330,12 @@ namespace BililiveRecorder.WPF.Pages
         }
     }
 
+    [Flags]
     public enum SortedBy
     {
         None = 0,
-        RoomId,
-        Status,
+        RoomId = 1,
+        Status = 2,
     }
 
     internal class KeyIndexMappingReadOnlyList : IReadOnlyList<IRoom?>, IKeyIndexMapping
@@ -357,7 +352,7 @@ namespace BililiveRecorder.WPF.Pages
         public int Count => this.data.Count;
 
         public IEnumerator<IRoom?> GetEnumerator() => this.data.GetEnumerator();
-        IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable)this.data).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => this.GetEnumerator();
 
         #region IKeyIndexMapping
 

@@ -5,6 +5,7 @@ using System.CommandLine.Invocation;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using BililiveRecorder.Cli.Configure;
 using BililiveRecorder.Core;
 using BililiveRecorder.Core.Config;
@@ -22,7 +23,7 @@ namespace BililiveRecorder.Cli
 {
     internal class Program
     {
-        private static int Main(string[] args)
+        private static async Task<int> Main(string[] args)
         {
             var cmd_run = new Command("run", "Run BililiveRecorder in standard mode")
             {
@@ -31,23 +32,41 @@ namespace BililiveRecorder.Cli
                 new Argument<string>("path"),
             };
             cmd_run.AddAlias("r");
-            cmd_run.Handler = CommandHandler.Create<string, LogEventLevel, LogEventLevel>(RunConfigMode);
+            cmd_run.Handler = CommandHandler.Create<LogEventLevel, LogEventLevel, string>(RunConfigModeAsync);
 
             var cmd_portable = new Command("portable", "Run BililiveRecorder in config-less mode")
             {
-                new Option<LogEventLevel>(new []{ "--loglevel", "--log", "-l" }, () => LogEventLevel.Information, "Minimal log level output to console"),
-                new Option<LogEventLevel>(new []{ "--logfilelevel", "--flog" }, () => LogEventLevel.Debug, "Minimal log level output to file"),
-                new Option<RecordMode>(new []{ "--record-mode", "--mode" }, () => RecordMode.Standard, "Recording mode"),
-                new Option<string>(new []{ "--cookie", "-c" }, "Cookie string for api requests"),
-                new Option<string>(new []{ "--filename-format", "-f" }, "File name format"),
-                new Option<PortableModeArguments.PortableDanmakuMode>(new []{ "--danmaku", "-d" }, "Flags for danmaku recording"),
-                new Option<string>("--webhook-url", "URL of webhoook"),
-                new Option<string>("--live-api-host"),
-                new Argument<string>("output-path"),
-                new Argument<int[]>("room-ids")
+                new Option<LogEventLevel>(new []{ "--loglevel", "--log", "-l" }, () => Enum.Parse<LogEventLevel>(
+                    Environment.GetEnvironmentVariable("BREC_LOG_LEVEL_CONSOLE") ?? "Information"), "Minimal log level output to console"),
+
+                new Option<LogEventLevel>(new []{ "--logfilelevel", "--flog" }, () => Enum.Parse<LogEventLevel>(
+                    Environment.GetEnvironmentVariable("BREC_LOG_LEVEL_FILE") ?? "Debug"), "Minimal log level output to file"),
+                new Option<RecordMode>(new []{ "--record-mode", "--mode" }, () => Enum.Parse<RecordMode>(
+                    Environment.GetEnvironmentVariable("BREC_RECORD_MODE") ?? "Standard"),
+                    "Recording mode"),
+                new Option<string?>(new []{ "--cookie", "-c" }, () =>
+                    Environment.GetEnvironmentVariable("BREC_COOKIE") ??
+                    "Cookie string for api requests"),
+                new Option<string>(new []{ "--filename-format", "-f" }, () =>
+                    Environment.GetEnvironmentVariable("BREC_FILENAME_FORMAT") ?? "{roomid}/{date}-{time}-{ms}.flv",
+                    "File name format"),
+                new Option<PortableModeArguments.PortableDanmakuMode>(new []{ "--danmaku", "-d" }, ()=> Enum.Parse<PortableModeArguments.PortableDanmakuMode>(
+                    Environment.GetEnvironmentVariable("BREC_DANMAKU_MODE") ?? "0")
+                    , "Flags for danmaku recording"),
+                new Option<string?>("--webhook-url", () =>
+                    Environment.GetEnvironmentVariable("BREC_WEBHOOK_URL"),
+                    "URL of webhoook"),
+                new Option<string?>("--live-api-host", ()=>
+                    Environment.GetEnvironmentVariable("BREC_LIVE_API_HOST")),
+                new Argument<string>("output-path", () =>
+                    Environment.GetEnvironmentVariable("BREC_WORKDIR")
+                    ?? Environment.CurrentDirectory, "Path to save recording files"),
+                new Argument<int[]>("room-ids",()=> (Environment.GetEnvironmentVariable("BREC_ROOM_ID_LIST") ?? "1")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries)
+                    .Select(v => int.Parse(v)).ToArray())
             };
             cmd_portable.AddAlias("p");
-            cmd_portable.Handler = CommandHandler.Create<PortableModeArguments>(RunPortableMode);
+            cmd_portable.Handler = CommandHandler.Create<PortableModeArguments>(RunPortableModeAsync);
 
             var root = new RootCommand("A Stream Recorder For Bilibili Live")
             {
@@ -56,14 +75,26 @@ namespace BililiveRecorder.Cli
                 new ConfigureCommand(),
                 new ToolCommand()
             };
-
-            return root.Invoke(args);
+            return await root.InvokeAsync(args);
         }
 
-        private static int RunConfigMode(string path, LogEventLevel logLevel, LogEventLevel logFileLevel)
+        private static async Task<int> RunConfigModeAsync(LogEventLevel logLevel, LogEventLevel logFileLevel, string path)
         {
-            using var logger = BuildLogger(logLevel, logFileLevel);
-            Log.Logger = logger;
+            bool logToFile = true;
+            try
+            {
+                var isInCluster = k8s.KubernetesClientConfiguration.IsInCluster();
+                if (isInCluster)
+                {
+                    logToFile = false;
+                    Log.Logger.Warning("Kubernetes detected. Logging to file is disabled.");
+                }
+            }
+            catch
+            {
+            }
+            using var logger = BuildLogger(logLevel, logFileLevel, writeToFile: logToFile);
+            // Log.Logger = logger;
 
             path = Path.GetFullPath(path);
             var config = ConfigParser.LoadFrom(path);
@@ -76,28 +107,38 @@ namespace BililiveRecorder.Cli
             config.Global.WorkDirectory = path;
 
             var serviceProvider = BuildServiceProvider(config, logger);
-            var recorder = serviceProvider.GetRequiredService<IRecorder>();
+            using var recorder = serviceProvider.GetRequiredService<IRecorder>();
 
-            ConsoleCancelEventHandler p = null!;
-            var semaphore = new SemaphoreSlim(0, 1);
+            ConsoleCancelEventHandler? p = null;
+            using var cts = new CancellationTokenSource();
             p = (sender, e) =>
             {
                 Console.CancelKeyPress -= p;
                 e.Cancel = true;
-                recorder.Dispose();
-                semaphore.Release();
+                //recorder.Dispose();
+                cts.Cancel();
             };
             Console.CancelKeyPress += p;
-
-            semaphore.Wait();
-            Thread.Sleep(1000 * 2);
-            Console.ReadLine();
+            await Task.Delay(-1, cts.Token);
             return 0;
         }
 
-        private static int RunPortableMode(PortableModeArguments opts)
+        private static async Task<int> RunPortableModeAsync(PortableModeArguments opts)
         {
-            using var logger = BuildLogger(opts.LogLevel, opts.LogFileLevel);
+            bool logToFile = true;
+            try
+            {
+                var isInCluster = k8s.KubernetesClientConfiguration.IsInCluster();
+                if (isInCluster)
+                {
+                    logToFile = false;
+                    Log.Logger.Warning("Kubernetes detected. Logging to file is disabled.");
+                }
+            }
+            catch
+            {
+            }
+            using var logger = BuildLogger(opts.LogLevel, opts.LogFileLevel, writeToFile: logToFile);
             Log.Logger = logger;
 
             var config = new ConfigV2()
@@ -136,20 +177,16 @@ namespace BililiveRecorder.Cli
             var serviceProvider = BuildServiceProvider(config, logger);
             var recorder = serviceProvider.GetRequiredService<IRecorder>();
 
-            ConsoleCancelEventHandler p = null!;
-            var semaphore = new SemaphoreSlim(0, 1);
+            ConsoleCancelEventHandler? p = null;
+            using var cts = new CancellationTokenSource();
             p = (sender, e) =>
             {
                 Console.CancelKeyPress -= p;
                 e.Cancel = true;
-                recorder.Dispose();
-                semaphore.Release();
+                cts.Cancel();
             };
             Console.CancelKeyPress += p;
-
-            semaphore.Wait();
-            Thread.Sleep(1000 * 2);
-            Console.ReadLine();
+            await Task.Delay(-1, cts.Token);
             return 0;
         }
 
@@ -160,7 +197,7 @@ namespace BililiveRecorder.Cli
             .AddRecorder()
             .BuildServiceProvider();
 
-        private static Logger BuildLogger(LogEventLevel logLevel, LogEventLevel logFileLevel) => new LoggerConfiguration()
+        private static Logger BuildLogger(LogEventLevel logLevel, LogEventLevel logFileLevel, bool writeToFile = true, bool writeToFileAsync = true) => new LoggerConfiguration()
             .MinimumLevel.Verbose()
             .Enrich.WithProcessId()
             .Enrich.WithThreadId()
@@ -176,7 +213,13 @@ namespace BililiveRecorder.Cli
                 x.FileModificationTime,
             })
             .WriteTo.Console(restrictedToMinimumLevel: logLevel, outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{RoomId}] {Message:lj}{NewLine}{Exception}")
-            .WriteTo.File(new CompactJsonFormatter(), "./logs/bilirec.txt", restrictedToMinimumLevel: logFileLevel, shared: true, rollingInterval: RollingInterval.Day, rollOnFileSizeLimit: true)
+            .When(writeToFile, x =>
+                x.When(writeToFileAsync,
+                    y => y.WriteTo.Async(a => a.File(
+                    new CompactJsonFormatter(), "./logs/bilirec.txt", restrictedToMinimumLevel: logFileLevel, shared: true, rollingInterval: RollingInterval.Day, rollOnFileSizeLimit: true
+                )), y => y.WriteTo.File(
+                    new CompactJsonFormatter(), "./logs/bilirec.txt", restrictedToMinimumLevel: logFileLevel, shared: true, rollingInterval: RollingInterval.Day, rollOnFileSizeLimit: true))
+            )
             .CreateLogger();
 
         public class PortableModeArguments
@@ -211,6 +254,31 @@ namespace BililiveRecorder.Cli
                 Gift = 1 << 3,
                 RawData = 1 << 4,
                 All = Danmaku | SuperChat | Guard | Gift | RawData
+            }
+        }
+    }
+
+
+    static class ProgramEx
+    {
+        public static T When<T>(this T @this, bool condition, Func<T, T> funcThen)
+        {
+            if (condition)
+            {
+                return funcThen(@this);
+            }
+            return @this;
+        }
+
+        public static TOut When<TIn, TOut>(this TIn @this, bool condition, Func<TIn, TOut> funcThen, Func<TIn, TOut> funcElse)
+        {
+            if (condition)
+            {
+                return funcThen(@this);
+            }
+            else
+            {
+                return funcElse(@this);
             }
         }
     }

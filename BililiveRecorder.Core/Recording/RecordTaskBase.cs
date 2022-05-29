@@ -105,7 +105,7 @@ namespace BililiveRecorder.Core.Recording
                 {
                     await Task.Delay(1000);
                     if (((WeakReference<Stream>)state).TryGetTarget(out var weakStream))
-                        weakStream.Dispose();
+                        await weakStream.DisposeAsync().ConfigureAwait(false);
                 }
                 catch (Exception)
                 { }

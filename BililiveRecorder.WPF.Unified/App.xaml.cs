@@ -6,6 +6,8 @@ using System.Configuration;
 using System.Data;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using BililiveRecorder.DependencyInjection;
@@ -60,6 +62,7 @@ namespace BililiveRecorder.WPF
 
             services.AddSingleton<IRootPage, RootPage>();
             services.AddSingleton<IPage, AboutPage>();
+            services.AddSingleton<AboutModel>();
 
             services.AddSingleton<IPage, ToolboxAutoFixPage>();
             services.AddSingleton<IPage, ToolboxDanmakuMergerPage>();
@@ -123,9 +126,69 @@ namespace BililiveRecorder.WPF
                 }
             };
 
+            var aboutModel = _genericHost.Services.GetRequiredService<AboutModel>();
+
+            var loadedAsmList = AppDomain.CurrentDomain.GetAssemblies();
+
+            var metadataAttrType = typeof(AssemblyMetadataAttribute);
+
+            void addLabel(Assembly asm)
+            {
+                var metadataList = asm.GetCustomAttributes<AssemblyMetadataAttribute>().ToList();
+                if (asm.ManifestModule.Name == "<In Memory Module>")
+                {
+                    return;
+                }
+                if (metadataList.Any(attr => attr.Key == ".NETFrameworkAssembly"))
+                {
+                    return;
+                }
+                if (metadataList.Any(attr => attr.Key == "RepositoryUrl" && attr.Value?.StartsWith("https://github.com/dotnet/wpf") == true))
+                {
+                    return;
+                }
+                var projectLibNames = new[] { nameof(BililiveRecorder) };
+                var systemLibNames = new[] { "PresentationCore", "PresentationFramework", "WindowsBase", "DirectWriteForwarder", };
+                var sysProductNames = new[] { "C#/WinRT", "Visual Studio", "Windows SDK" };
+                var name = asm.GetName();
+                if (projectLibNames.Any(x => name.Name!.StartsWith(x)) || systemLibNames.Any(x => name.Name!.Contains(x)))
+                {
+                    return;
+                }
+                var product = asm.GetCustomAttribute<AssemblyProductAttribute>();
+                if (sysProductNames.Any(x => product?.Product?.Contains(x) == true))
+                {
+                    return;
+                }
+
+                var title = asm.GetCustomAttribute<AssemblyTitleAttribute>();
+                var version = asm.GetCustomAttribute<AssemblyFileVersionAttribute>();
+                var copyright = asm.GetCustomAttribute<AssemblyCopyrightAttribute>();
+                var versionText = version?.Version ?? name.Version.ToString();
+                var infoText = $"{name.Name} {versionText} {copyright?.Copyright}".TrimEnd();
+                if (!aboutModel!.Libraries.Contains(infoText))
+                    aboutModel!.Libraries.Add(infoText);
+            };
+
+            foreach (var asm in loadedAsmList)
+            {
+                addLabel(asm);
+            }
+            AppDomain.CurrentDomain.AssemblyLoad += (_, e) =>
+                    {
+                        if (Dispatcher.Thread != Thread.CurrentThread)
+                        {
+                            this.Dispatcher.Invoke(() => addLabel(e.LoadedAssembly));
+                        }
+                        else
+                        {
+                            addLabel(e.LoadedAssembly);
+                        }
+                    };
+
             _genericHost.Services.GetRequiredService<WorkDirectoryLoader>().Read();
 
-            this.MainWindow = _genericHost.Services.GetService<MainWindow>();
+            this.MainWindow = _genericHost.Services.GetRequiredService<MainWindow>();
             this.MainWindow!.Show();
             _genericHost.Start();
         }
@@ -199,7 +262,7 @@ namespace BililiveRecorder.WPF
             .WriteTo.Sink<WpfLogEventSink>(Serilog.Events.LogEventLevel.
 #if DEBUG
                 Debug
-#else 
+#else
               Information
 #endif
             )

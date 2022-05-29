@@ -107,7 +107,7 @@ namespace BililiveRecorder.ToolBox
                 }
                 else
                 {
-                    AnsiConsole.Render(new FigletText("Error").Color(Color.Red));
+                    AnsiConsole.Write(new FigletText("Error").Color(Color.Red));
 
                     var errorInfo = new Table
                     {
@@ -116,10 +116,10 @@ namespace BililiveRecorder.ToolBox
                     errorInfo.AddColumn(new TableColumn("Error Code").Centered());
                     errorInfo.AddColumn(new TableColumn("Error Message").Centered());
                     errorInfo.AddRow("[red]" + response.Status.ToString().EscapeMarkup() + "[/]", "[red]" + (response.ErrorMessage ?? string.Empty) + "[/]");
-                    AnsiConsole.Render(errorInfo);
+                    AnsiConsole.Write(errorInfo);
 
                     if (response.Exception is not null)
-                        AnsiConsole.Render(new Panel(response.Exception.GetRenderable(ExceptionFormats.ShortenPaths | ExceptionFormats.ShowLinks))
+                        AnsiConsole.Write(new Panel(response.Exception.GetRenderable(ExceptionFormats.ShortenPaths | ExceptionFormats.ShowLinks))
                         {
                             Header = new PanelHeader("Exception Info"),
                             Border = BoxBorder.Rounded

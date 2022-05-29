@@ -12,8 +12,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{2D44A59D-E43
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{623A2ACC-DAC6-4E6F-9242-B4B54381AAE1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BililiveRecorder.WPF", "BililiveRecorder.WPF\BililiveRecorder.WPF.csproj", "{0C7D4236-BF43-4944-81FE-E07E05A3F31D}"
-EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "BililiveRecorder.Core", "BililiveRecorder.Core\BililiveRecorder.Core.csproj", "{CB9F2D58-181D-49F7-9560-D35A9B9C1D8C}"
 	ProjectSection(ProjectDependencies) = postProject
 		{7610E19C-D3AB-4CBC-983E-6FDA36F4D4B3} = {7610E19C-D3AB-4CBC-983E-6FDA36F4D4B3}
@@ -37,10 +35,6 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{0C7D4236-BF43-4944-81FE-E07E05A3F31D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{0C7D4236-BF43-4944-81FE-E07E05A3F31D}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{0C7D4236-BF43-4944-81FE-E07E05A3F31D}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{0C7D4236-BF43-4944-81FE-E07E05A3F31D}.Release|Any CPU.Build.0 = Release|Any CPU
 		{CB9F2D58-181D-49F7-9560-D35A9B9C1D8C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{CB9F2D58-181D-49F7-9560-D35A9B9C1D8C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CB9F2D58-181D-49F7-9560-D35A9B9C1D8C}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -74,7 +68,6 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{0C7D4236-BF43-4944-81FE-E07E05A3F31D} = {2D44A59D-E437-4FEE-8A2E-3FF00D53A64D}
 		{CB9F2D58-181D-49F7-9560-D35A9B9C1D8C} = {2D44A59D-E437-4FEE-8A2E-3FF00D53A64D}
 		{1B626335-283F-4313-9045-B5B96FAAB2DF} = {2D44A59D-E437-4FEE-8A2E-3FF00D53A64D}
 		{7610E19C-D3AB-4CBC-983E-6FDA36F4D4B3} = {2D44A59D-E437-4FEE-8A2E-3FF00D53A64D}
@@ -83,10 +76,10 @@ Global
 		{32E554B1-0ECC-4145-85B8-3FC128FEBEA1} = {623A2ACC-DAC6-4E6F-9242-B4B54381AAE1}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		RESX_SortFileContentOnSave = True
-		SolutionGuid = {F3CB8B14-077A-458F-BD8E-1747ED0F5170}
-		RESX_NeutralResourcesLanguage = zh-Hans
-		RESX_SaveFilesImmediatelyUponChange = True
 		RESX_ShowErrorsInErrorList = False
+		RESX_SaveFilesImmediatelyUponChange = True
+		RESX_NeutralResourcesLanguage = zh-Hans
+		SolutionGuid = {F3CB8B14-077A-458F-BD8E-1747ED0F5170}
+		RESX_SortFileContentOnSave = True
 	EndGlobalSection
 EndGlobal

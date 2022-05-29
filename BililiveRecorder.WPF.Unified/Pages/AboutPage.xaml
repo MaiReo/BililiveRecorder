@@ -14,16 +14,16 @@
     xmlns:local="clr-namespace:BililiveRecorder.WPF.Pages"
     mc:Ignorable="d" 
     d:DesignHeight="600" d:DesignWidth="900"
-    Title="AboutPage">
-    <Grid Margin="10" d:DataContext="{d:DesignInstance IsDesignTimeCreatable=True, Type=m:AboutModel}">
+    Title="AboutPage"
+    DataContext="{Binding RelativeSource={RelativeSource Mode=Self}, Path=Model}"
+    Loaded="Page_Loaded"
+    d:DataContext="{d:DesignInstance IsDesignTimeCreatable=True, Type=m:AboutModel}">
+    <Grid Margin="10">
         <Grid.Resources>
             <!-- 忽略此处的一个 Error，是 Visual Studio 的 bug -->
             <!-- Ignore the following Error, caused by Visual Studio bug -->
             <ResourceDictionary Source="pack://application:,,,/ModernWpf;component/DensityStyles/Compact.xaml"/>
         </Grid.Resources>
-        <Grid.DataContext>
-            <m:AboutModel/>
-        </Grid.DataContext>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -118,44 +118,7 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <TextBlock Text="{l:Loc About_LibrariesUsed}" FontSize="22"/>
-            <ListView Grid.Row="1">
-                <ListView.Items>
-                    <Label Content="CliWrap"/>
-                    <Label Content="FastHashes"/>
-                    <Label Content="GitVersion.MsBuild"/>
-                    <Label Content="Hardcodet.NotifyIcon.Wpf"/>
-                    <Label Content="HierarchicalPropertyDefault"/>
-                    <Label Content="JsonSubTypes"/>
-                    <Label Content="Microsoft.Bcl.HashCode"/>
-                    <Label Content="Microsoft.Extensions.DependencyInjection"/>
-                    <Label Content="Microsoft.Extensions.DependencyInjection.Abstractions"/>
-                    <Label Content="Microsoft.IO.RecyclableMemoryStream"/>
-                    <Label Content="ModernWpfUI"/>
-                    <Label Content="Nerdbank.Streams"/>
-                    <Label Content="Newtonsoft.Json"/>
-                    <Label Content="Nullable"/>
-                    <Label Content="Polly"/>
-                    <Label Content="Polly.Caching.Memory"/>
-                    <Label Content="Sentry"/>
-                    <Label Content="Sentry.Serilog"/>
-                    <Label Content="Serilog"/>
-                    <Label Content="Serilog.Enrichers.Process"/>
-                    <Label Content="Serilog.Enrichers.Thread"/>
-                    <Label Content="Serilog.Exceptions"/>
-                    <Label Content="Serilog.Formatting.Compact"/>
-                    <Label Content="Serilog.Sinks.Console"/>
-                    <Label Content="Serilog.Sinks.Debug"/>
-                    <Label Content="Serilog.Sinks.File"/>
-                    <Label Content="squirrel.windows"/>
-                    <Label Content="StructLinq"/>
-                    <Label Content="System.CommandLine"/>
-                    <Label Content="System.IO.Pipeline"/>
-                    <Label Content="System.Memory"/>
-                    <Label Content="WindowsAPICodePack-Core"/>
-                    <Label Content="WindowsAPICodePack-Shell"/>
-                    <Label Content="WPFLocalizeExtension"/>
-                </ListView.Items>
-            </ListView>
+            <ListView Grid.Row="1" ItemsSource="{Binding Libraries}" />
         </Grid>
     </Grid>
 </ui:Page>

@@ -103,12 +103,12 @@ namespace BililiveRecorder.Core.Recording
                 }
 
                 try
-                { file.Dispose(); }
+                { await file.DisposeAsync().ConfigureAwait(false);  }
                 catch (Exception ex)
                 { this.logger.Warning(ex, "关闭文件时发生错误"); }
 
                 try
-                { stream.Dispose(); }
+                { await stream.DisposeAsync().ConfigureAwait(false);  }
                 catch (Exception) { }
 
                 this.OnRecordSessionEnded(EventArgs.Empty);
