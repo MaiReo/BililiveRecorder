@@ -245,7 +245,7 @@ namespace BililiveRecorder.Cli
 
                     recorder = serviceProvider.GetRequiredService<IRecorder>();
 
-                    await Task.WhenAny(Task.Delay(-1, token), host.WaitForShutdownAsync()).ConfigureAwait(false);
+                    await host.WaitForShutdownAsync(token).ConfigureAwait(false);
 
                     logger.Information("Shutdown in progress.");
 
