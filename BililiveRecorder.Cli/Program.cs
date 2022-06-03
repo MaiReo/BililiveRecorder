@@ -249,7 +249,7 @@ namespace BililiveRecorder.Cli
 
                     logger.Information("Shutdown in progress.");
 
-                    await host.StopAsync().ConfigureAwait(false);
+                    await host.StopAsync(token).ConfigureAwait(false);
                 }
                 else
                 {
