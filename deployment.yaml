@@ -23,7 +23,7 @@ spec:
       - env:
         - name: BREC_ROOM_ID_LIST
           value: "23140417"
-        image: registry-vpc.cn-shanghai.aliyuncs.com/maireo95/brec:cli-1.4
+        image: registry-vpc.cn-shanghai.aliyuncs.com/maireo95/brec:cli-1.4.1
         imagePullPolicy: IfNotPresent
         name: brec
         resources:
