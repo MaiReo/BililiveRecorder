@@ -1,10 +1,10 @@
 using System;
-using BililiveRecorder.Core.Config.V2;
+using BililiveRecorder.Core.Config.V3;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BililiveRecorder.Core
 {
-    public class RoomFactory : IRoomFactory
+    internal class RoomFactory : IRoomFactory
     {
         private readonly IServiceProvider serviceProvider;
 

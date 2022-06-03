@@ -10,10 +10,11 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="6.0.*" />
     <PackageReference Include="Microsoft.IO.RecyclableMemoryStream" Version="2.2.*" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
-    <PackageReference Include="Spectre.Verify.Extensions" Version="0.5.*" />
+    <PackageReference Include="Spectre.Verify.Extensions" Version="16.*" />
     <PackageReference Include="Verify.Xunit" Version="16.*" />
+    <PackageReference Include="PublicApiGenerator" Version="10.*" />
     <PackageReference Include="xunit" Version="2.4.1" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.3">
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.5">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>

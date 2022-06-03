@@ -4,20 +4,26 @@ using System.Threading;
 using System.Threading.Tasks;
 using BililiveRecorder.Core.Api;
 using BililiveRecorder.Core.Event;
+using BililiveRecorder.Core.Scripting;
+using BililiveRecorder.Core.Templating;
 using Serilog;
 
 namespace BililiveRecorder.Core.Recording
 {
-    public class RawDataRecordTask : RecordTaskBase
+    internal class RawDataRecordTask : RecordTaskBase
     {
         private RecordFileOpeningEventArgs? fileOpeningEventArgs;
 
         public RawDataRecordTask(IRoom room,
                                  ILogger logger,
-                                 IApiClient apiClient)
+                                 IApiClient apiClient,
+                                 FileNameGenerator fileNameGenerator,
+                                 UserScriptRunner userScriptRunner)
             : base(room: room,
                    logger: logger?.ForContext<RawDataRecordTask>().ForContext(LoggingContext.RoomId, room.RoomConfig.RoomId)!,
-                   apiClient: apiClient)
+                   apiClient: apiClient,
+                   fileNameGenerator: fileNameGenerator,
+                   userScriptRunner: userScriptRunner)
         {
         }
 
@@ -60,9 +66,18 @@ namespace BililiveRecorder.Core.Recording
                     if (bytesRead == 0)
                         break;
 
-                    Interlocked.Add(ref this.fillerDownloadedBytes, bytesRead);
+                    Interlocked.Add(ref this.ioNetworkDownloadedBytes, bytesRead);
 
+                    this.ioDiskStopwatch.Restart();
                     await file.WriteAsync(buffer, 0, bytesRead).ConfigureAwait(false);
+                    this.ioDiskStopwatch.Stop();
+
+                    lock (this.ioDiskStatsLock)
+                    {
+                        this.ioDiskWriteDuration += this.ioDiskStopwatch.Elapsed;
+                        this.ioDiskWrittenBytes += bytesRead;
+                    }
+                    this.ioDiskStopwatch.Reset();
                 }
             }
             catch (OperationCanceledException ex)
@@ -82,25 +97,20 @@ namespace BililiveRecorder.Core.Recording
                 this.timer.Stop();
                 this.RequestStop();
 
-                try
-                {
-                    var openingEventArgs = this.fileOpeningEventArgs;
-                    if (openingEventArgs is not null)
-                        this.OnRecordFileClosed(new RecordFileClosedEventArgs(this.room)
-                        {
-                            SessionId = this.SessionId,
-                            FullPath = openingEventArgs.FullPath,
-                            RelativePath = openingEventArgs.RelativePath,
-                            FileOpenTime = openingEventArgs.FileOpenTime,
-                            FileCloseTime = DateTimeOffset.Now,
-                            Duration = 0,
-                            FileSize = file.Length,
-                        });
-                }
-                catch (Exception ex)
-                {
-                    this.logger.Warning(ex, "Error calling OnRecordFileClosed");
-                }
+                RecordFileClosedEventArgs? recordFileClosedEvent;
+                if (this.fileOpeningEventArgs is { } openingEventArgs)
+                    recordFileClosedEvent = new RecordFileClosedEventArgs(this.room)
+                    {
+                        SessionId = this.SessionId,
+                        FullPath = openingEventArgs.FullPath,
+                        RelativePath = openingEventArgs.RelativePath,
+                        FileOpenTime = openingEventArgs.FileOpenTime,
+                        FileCloseTime = DateTimeOffset.Now,
+                        Duration = 0,
+                        FileSize = file.Length,
+                    };
+                else
+                    recordFileClosedEvent = null;
 
                 try
                 { await file.DisposeAsync().ConfigureAwait(false);  }
@@ -110,6 +120,16 @@ namespace BililiveRecorder.Core.Recording
                 try
                 { await stream.DisposeAsync().ConfigureAwait(false);  }
                 catch (Exception) { }
+
+                try
+                {
+                    if (recordFileClosedEvent is not null)
+                        this.OnRecordFileClosed(recordFileClosedEvent);
+                }
+                catch (Exception ex)
+                {
+                    this.logger.Warning(ex, "Error calling OnRecordFileClosed");
+                }
 
                 this.OnRecordSessionEnded(EventArgs.Empty);
 

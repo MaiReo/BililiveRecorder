@@ -4,14 +4,14 @@ using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
 using BililiveRecorder.Core.Config;
-using BililiveRecorder.Core.Config.V2;
+using BililiveRecorder.Core.Config.V3;
 using BililiveRecorder.Core.Event;
 using BililiveRecorder.Core.SimpleWebhook;
 using Serilog;
 
 namespace BililiveRecorder.Core
 {
-    public class Recorder : IRecorder
+    internal class Recorder : IRecorder
     {
         private readonly object lockObject = new object();
         private readonly ObservableCollection<IRoom> roomCollection;
@@ -22,7 +22,7 @@ namespace BililiveRecorder.Core
 
         private bool disposedValue;
 
-        public Recorder(IRoomFactory roomFactory, ConfigV2 config, ILogger logger)
+        public Recorder(IRoomFactory roomFactory, ConfigV3 config, ILogger logger)
         {
             this.roomFactory = roomFactory ?? throw new ArgumentNullException(nameof(roomFactory));
             this.Config = config ?? throw new ArgumentNullException(nameof(config));
@@ -50,28 +50,31 @@ namespace BililiveRecorder.Core
         public event EventHandler<AggregatedRoomEventArgs<RecordSessionEndedEventArgs>>? RecordSessionEnded;
         public event EventHandler<AggregatedRoomEventArgs<RecordFileOpeningEventArgs>>? RecordFileOpening;
         public event EventHandler<AggregatedRoomEventArgs<RecordFileClosedEventArgs>>? RecordFileClosed;
-        public event EventHandler<AggregatedRoomEventArgs<NetworkingStatsEventArgs>>? NetworkingStats;
+        public event EventHandler<AggregatedRoomEventArgs<IOStatsEventArgs>>? IOStats;
         public event EventHandler<AggregatedRoomEventArgs<RecordingStatsEventArgs>>? RecordingStats;
+#pragma warning disable CS0067 // The event 'Recorder.PropertyChanged' is never used
         public event PropertyChangedEventHandler? PropertyChanged;
+#pragma warning restore CS0067 // The event 'Recorder.PropertyChanged' is never used
 
-        public ConfigV2 Config { get; }
+        public ConfigV3 Config { get; }
 
         public ReadOnlyObservableCollection<IRoom> Rooms { get; }
 
-        public void AddRoom(int roomid) => this.AddRoom(roomid, true);
+        public IRoom AddRoom(int roomid) => this.AddRoom(roomid, true);
 
-        public void AddRoom(int roomid, bool enabled)
+        public IRoom AddRoom(int roomid, bool enabled)
         {
             lock (this.lockObject)
             {
                 this.logger.Debug("AddRoom {RoomId}, AutoRecord: {AutoRecord}", roomid, enabled);
                 var roomConfig = new RoomConfig { RoomId = roomid, AutoRecord = enabled };
-                this.AddRoom(roomConfig, 0);
+                var room = this.AddRoom(roomConfig, 0);
                 this.SaveConfig();
+                return room;
             }
         }
 
-        private void AddRoom(RoomConfig roomConfig, int initDelayFactor)
+        private IRoom AddRoom(RoomConfig roomConfig, int initDelayFactor)
         {
             roomConfig.SetParent(this.Config.Global);
             var room = this.roomFactory.CreateRoom(roomConfig, initDelayFactor);
@@ -80,11 +83,12 @@ namespace BililiveRecorder.Core
             room.RecordSessionEnded += this.Room_RecordSessionEnded;
             room.RecordFileOpening += this.Room_RecordFileOpening;
             room.RecordFileClosed += this.Room_RecordFileClosed;
-            room.NetworkingStats += this.Room_NetworkingStats;
+            room.IOStats += this.Room_IOStats;
             room.RecordingStats += this.Room_RecordingStats;
             room.PropertyChanged += this.Room_PropertyChanged;
 
             this.roomCollection.Add(room);
+            return room;
         }
 
         public void RemoveRoom(IRoom room)
@@ -120,10 +124,10 @@ namespace BililiveRecorder.Core
 
         #region Events
 
-        private void Room_NetworkingStats(object sender, NetworkingStatsEventArgs e)
+        private void Room_IOStats(object sender, IOStatsEventArgs e)
         {
             var room = (IRoom)sender;
-            NetworkingStats?.Invoke(this, new AggregatedRoomEventArgs<NetworkingStatsEventArgs>(room, e));
+            IOStats?.Invoke(this, new AggregatedRoomEventArgs<IOStatsEventArgs>(room, e));
         }
 
         private void Room_RecordingStats(object sender, RecordingStatsEventArgs e)
@@ -163,6 +167,20 @@ namespace BililiveRecorder.Core
 
         private void Room_PropertyChanged(object sender, PropertyChangedEventArgs e)
         {
+            if (sender is not IRoom room)
+                return;
+
+            if (e.PropertyName == nameof(IRoom.Streaming))
+            {
+                if (room.Streaming)
+                {
+                    _ = Task.Run(async () => await this.basicWebhookV2.SendStreamStartedAsync(new StreamStartedEventArgs(room)).ConfigureAwait(false));
+                }
+                else
+                {
+                    _ = Task.Run(async () => await this.basicWebhookV2.SendStreamEndedAsync(new StreamEndedEventArgs(room)).ConfigureAwait(false));
+                }
+            }
             // TODO
             // throw new NotImplementedException();
         }

@@ -3,7 +3,7 @@ using Newtonsoft.Json.Linq;
 #nullable enable
 namespace BililiveRecorder.Core.Api.Danmaku
 {
-    public enum DanmakuMsgType
+    internal enum DanmakuMsgType
     {
         /// <summary>
         /// 彈幕
@@ -39,7 +39,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
         RoomChange
     }
 
-    public class DanmakuModel
+    internal class DanmakuModel
     {
         /// <summary>
         /// 消息類型
@@ -101,7 +101,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
         /// <item><see cref="DanmakuMsgType.GuardBuy"/></item>
         /// </list></para>
         /// </summary>
-        public int UserID { get; set; }
+        public long UserID { get; set; }
 
         /// <summary>
         /// 用户舰队等级
@@ -155,15 +155,17 @@ namespace BililiveRecorder.Core.Api.Danmaku
         /// <summary>
         /// 原始数据
         /// </summary>
-        public string? RawString { get; set; }
+        public string RawString { get; set; }
 
         /// <summary>
         /// 原始数据
         /// </summary>
         public JObject? RawObject { get; set; }
 
-        public DanmakuModel()
-        { }
+        private DanmakuModel()
+        {
+            this.RawString = string.Empty;
+        }
 
         public DanmakuModel(string json)
         {
@@ -190,7 +192,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
                 case "DANMU_MSG":
                     this.MsgType = DanmakuMsgType.Comment;
                     this.CommentText = obj["info"]?[1]?.ToObject<string>();
-                    this.UserID = obj["info"]?[2]?[0]?.ToObject<int>() ?? 0;
+                    this.UserID = obj["info"]?[2]?[0]?.ToObject<long>() ?? 0;
                     this.UserName = obj["info"]?[2]?[1]?.ToObject<string>();
                     this.IsAdmin = obj["info"]?[2]?[2]?.ToObject<string>() == "1";
                     this.IsVIP = obj["info"]?[2]?[3]?.ToObject<string>() == "1";
@@ -200,13 +202,13 @@ namespace BililiveRecorder.Core.Api.Danmaku
                     this.MsgType = DanmakuMsgType.GiftSend;
                     this.GiftName = obj["data"]?["giftName"]?.ToObject<string>();
                     this.UserName = obj["data"]?["uname"]?.ToObject<string>();
-                    this.UserID = obj["data"]?["uid"]?.ToObject<int>() ?? 0;
+                    this.UserID = obj["data"]?["uid"]?.ToObject<long>() ?? 0;
                     this.GiftCount = obj["data"]?["num"]?.ToObject<int>() ?? 0;
                     break;
                 case "GUARD_BUY":
                     {
                         this.MsgType = DanmakuMsgType.GuardBuy;
-                        this.UserID = obj["data"]?["uid"]?.ToObject<int>() ?? 0;
+                        this.UserID = obj["data"]?["uid"]?.ToObject<long>() ?? 0;
                         this.UserName = obj["data"]?["username"]?.ToObject<string>();
                         this.UserGuardLevel = obj["data"]?["guard_level"]?.ToObject<int>() ?? 0;
                         this.GiftName = this.UserGuardLevel == 3 ? "舰长" : this.UserGuardLevel == 2 ? "提督" : this.UserGuardLevel == 1 ? "总督" : "";
@@ -217,7 +219,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
                     {
                         this.MsgType = DanmakuMsgType.SuperChat;
                         this.CommentText = obj["data"]?["message"]?.ToString();
-                        this.UserID = obj["data"]?["uid"]?.ToObject<int>() ?? 0;
+                        this.UserID = obj["data"]?["uid"]?.ToObject<long>() ?? 0;
                         this.UserName = obj["data"]?["user_info"]?["uname"]?.ToString();
                         this.Price = obj["data"]?["price"]?.ToObject<double>() ?? 0;
                         this.SCKeepTime = obj["data"]?["time"]?.ToObject<int>() ?? 0;

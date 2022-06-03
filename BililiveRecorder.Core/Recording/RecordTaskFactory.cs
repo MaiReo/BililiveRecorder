@@ -1,11 +1,11 @@
 using System;
-using BililiveRecorder.Core.Config.V2;
+using BililiveRecorder.Core.Config;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
 
 namespace BililiveRecorder.Core.Recording
 {
-    public class RecordTaskFactory : IRecordTaskFactory
+    internal class RecordTaskFactory : IRecordTaskFactory
     {
         private readonly ILogger logger;
         private readonly IServiceProvider serviceProvider;

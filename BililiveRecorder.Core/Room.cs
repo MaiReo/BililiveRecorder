@@ -6,11 +6,12 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using BililiveRecorder.Core.Api;
-using BililiveRecorder.Core.Config.V2;
+using BililiveRecorder.Core.Config.V3;
 using BililiveRecorder.Core.Danmaku;
 using BililiveRecorder.Core.Event;
 using BililiveRecorder.Core.Recording;
 using Microsoft.Extensions.DependencyInjection;
+using Newtonsoft.Json.Linq;
 using Polly;
 using Serilog;
 using Serilog.Events;
@@ -18,7 +19,7 @@ using Timer = System.Timers.Timer;
 
 namespace BililiveRecorder.Core
 {
-    public class Room : IRoom
+    internal class Room : IRoom
     {
         private readonly object recordStartLock = new object();
         private readonly SemaphoreSlim recordRetryDelaySemaphoreSlim = new SemaphoreSlim(1, 1);
@@ -47,6 +48,8 @@ namespace BililiveRecorder.Core
 
         private IRecordTask? recordTask;
         private DateTimeOffset recordTaskStartTime;
+        private DateTimeOffset danmakuClientConnectTime;
+        private static readonly TimeSpan danmakuClientReconnectNoDelay = TimeSpan.FromMinutes(1);
 
         public Room(IServiceScope scope, RoomConfig roomConfig, int initDelayFactor, ILogger logger, IDanmakuClient danmakuClient, IApiClient apiClient, IBasicDanmakuWriter basicDanmakuWriter, IRecordTaskFactory recordTaskFactory)
         {
@@ -85,6 +88,8 @@ namespace BililiveRecorder.Core
         public string AreaNameParent { get => this.areaNameParent; private set => this.SetField(ref this.areaNameParent, value); }
         public string AreaNameChild { get => this.areaNameChild; private set => this.SetField(ref this.areaNameChild, value); }
 
+        public JObject? RawBilibiliApiJsonData { get; private set; }
+
         public bool Streaming { get => this.streaming; private set => this.SetField(ref this.streaming, value); }
 
         public bool AutoRecordForThisSession { get => this.autoRecordForThisSession; private set => this.SetField(ref this.autoRecordForThisSession, value); }
@@ -94,7 +99,7 @@ namespace BililiveRecorder.Core
         public bool Recording => this.recordTask != null;
 
         public RoomConfig RoomConfig { get; }
-        public RecordingStats Stats { get; } = new RecordingStats();
+        public RoomStats Stats { get; } = new RoomStats();
 
         public Guid ObjectId { get; } = Guid.NewGuid();
 
@@ -102,7 +107,7 @@ namespace BililiveRecorder.Core
         public event EventHandler<RecordSessionEndedEventArgs>? RecordSessionEnded;
         public event EventHandler<RecordFileOpeningEventArgs>? RecordFileOpening;
         public event EventHandler<RecordFileClosedEventArgs>? RecordFileClosed;
-        public event EventHandler<NetworkingStatsEventArgs>? NetworkingStats;
+        public event EventHandler<IOStatsEventArgs>? IOStats;
         public event EventHandler<RecordingStatsEventArgs>? RecordingStats;
         public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -163,8 +168,8 @@ namespace BililiveRecorder.Core
 
             try
             {
-                await this.FetchUserInfoAsync().ConfigureAwait(false);
                 await this.FetchRoomInfoAsync().ConfigureAwait(false);
+
                 this.StartDamakuConnection(delay: false);
 
                 if (this.Streaming && this.AutoRecordForThisSession && this.RoomConfig.AutoRecord)
@@ -186,22 +191,17 @@ namespace BililiveRecorder.Core
             var room = (await this.apiClient.GetRoomInfoAsync(this.RoomConfig.RoomId).ConfigureAwait(false)).Data;
             if (room != null)
             {
-                this.RoomConfig.RoomId = room.RoomId;
-                this.ShortId = room.ShortId;
-                this.Title = room.Title;
-                this.AreaNameParent = room.ParentAreaName;
-                this.AreaNameChild = room.AreaName;
-                this.Streaming = room.LiveStatus == 1;
-            }
-        }
+                this.RoomConfig.RoomId = room.Room.RoomId;
+                this.ShortId = room.Room.ShortId;
+                this.Title = room.Room.Title;
+                this.AreaNameParent = room.Room.ParentAreaName;
+                this.AreaNameChild = room.Room.AreaName;
+                this.Streaming = room.Room.LiveStatus == 1;
 
-        /// <exception cref="Exception"/>
-        private async Task FetchUserInfoAsync()
-        {
-            if (this.disposedValue)
-                return;
-            var user = await this.apiClient.GetUserInfoAsync(this.RoomConfig.RoomId).ConfigureAwait(false);
-            this.Name = user.Data?.Info?.Name ?? this.Name;
+                this.Name = room.User.BaseInfo.Name;
+
+                this.RawBilibiliApiJsonData = room.RawBilibiliApiJsonData;
+            }
         }
 
         ///
@@ -219,7 +219,7 @@ namespace BililiveRecorder.Core
                     return;
 
                 var task = this.recordTaskFactory.CreateRecordTask(this);
-                task.NetworkingStats += this.RecordTask_NetworkingStats;
+                task.IOStats += this.RecordTask_IOStats;
                 task.RecordingStats += this.RecordTask_RecordingStats;
                 task.RecordFileOpening += this.RecordTask_RecordFileOpening;
                 task.RecordFileClosed += this.RecordTask_RecordFileClosed;
@@ -349,13 +349,20 @@ namespace BililiveRecorder.Core
         #region Event Handlers
 
         ///
-        private void RecordTask_NetworkingStats(object sender, NetworkingStatsEventArgs e)
+        private void RecordTask_IOStats(object sender, IOStatsEventArgs e)
         {
-            this.logger.Verbose("Networking stats: {@stats}", e);
+            this.logger.Verbose("IO stats: {@stats}", e);
 
-            this.Stats.NetworkMbps = e.Mbps;
+            this.Stats.StartTime = e.StartTime;
+            this.Stats.EndTime = e.EndTime;
+            this.Stats.Duration = e.Duration;
+            this.Stats.NetworkBytesDownloaded = e.NetworkBytesDownloaded;
+            this.Stats.NetworkMbps = e.NetworkMbps;
+            this.Stats.DiskWriteDuration = e.DiskWriteDuration;
+            this.Stats.DiskBytesWritten = e.DiskBytesWritten;
+            this.Stats.DiskMBps = e.DiskMBps;
 
-            NetworkingStats?.Invoke(this, e);
+            IOStats?.Invoke(this, e);
         }
 
         ///
@@ -363,14 +370,31 @@ namespace BililiveRecorder.Core
         {
             this.logger.Verbose("Recording stats: {@stats}", e);
 
-            var diff = DateTimeOffset.UtcNow - this.recordTaskStartTime;
-            this.Stats.SessionDuration = TimeSpan.FromSeconds(Math.Round(diff.TotalSeconds));
-            this.Stats.FileMaxTimestamp = TimeSpan.FromMilliseconds(e.FileMaxTimestamp);
+            this.Stats.SessionDuration = TimeSpan.FromMilliseconds(e.SessionDuration);
+            this.Stats.TotalInputBytes = e.TotalInputBytes;
+            this.Stats.TotalOutputBytes = e.TotalOutputBytes;
+            this.Stats.CurrentFileSize = e.CurrentFileSize;
             this.Stats.SessionMaxTimestamp = TimeSpan.FromMilliseconds(e.SessionMaxTimestamp);
+            this.Stats.FileMaxTimestamp = TimeSpan.FromMilliseconds(e.FileMaxTimestamp);
+            this.Stats.AddedDuration = e.AddedDuration;
+            this.Stats.PassedTime = e.PassedTime;
             this.Stats.DurationRatio = e.DurationRatio;
 
-            this.Stats.TotalInputBytes = e.TotalInputVideoByteCount + e.TotalInputAudioByteCount;
-            this.Stats.TotalOutputBytes = e.TotalOutputVideoByteCount + e.TotalOutputAudioByteCount;
+            this.Stats.InputVideoBytes = e.InputVideoBytes;
+            this.Stats.InputAudioBytes = e.InputAudioBytes;
+
+            this.Stats.OutputVideoFrames = e.OutputVideoFrames;
+            this.Stats.OutputAudioFrames = e.OutputAudioFrames;
+            this.Stats.OutputVideoBytes = e.OutputVideoBytes;
+            this.Stats.OutputAudioBytes = e.OutputAudioBytes;
+
+            this.Stats.TotalInputVideoBytes = e.TotalInputVideoBytes;
+            this.Stats.TotalInputAudioBytes = e.TotalInputAudioBytes;
+
+            this.Stats.TotalOutputVideoFrames = e.TotalOutputVideoFrames;
+            this.Stats.TotalOutputAudioFrames = e.TotalOutputAudioFrames;
+            this.Stats.TotalOutputVideoBytes = e.TotalOutputVideoBytes;
+            this.Stats.TotalOutputAudioBytes = e.TotalOutputAudioBytes;
 
             RecordingStats?.Invoke(this, e);
         }
@@ -457,7 +481,7 @@ namespace BililiveRecorder.Core
                     break;
             }
 
-            _ = this.basicDanmakuWriter.WriteAsync(d);
+            _ = Task.Run(async () => await this.basicDanmakuWriter.WriteAsync(d));
         }
 
         private void DanmakuClient_StatusChanged(object sender, Api.Danmaku.StatusChangedEventArgs e)
@@ -465,13 +489,19 @@ namespace BililiveRecorder.Core
             if (e.Connected)
             {
                 this.DanmakuConnected = true;
+                this.danmakuClientConnectTime = DateTimeOffset.UtcNow;
                 this.logger.Information("弹幕服务器已连接");
             }
             else
             {
                 this.DanmakuConnected = false;
                 this.logger.Information("与弹幕服务器的连接被断开");
-                this.StartDamakuConnection(delay: true);
+
+                // 如果连接弹幕服务器的时间在至少 1 分钟之前，重连时不需要等待
+                // 针对偶尔的网络波动的优化，如果偶尔断开了尽快重连，减少漏录的弹幕量
+                this.StartDamakuConnection(delay: !((DateTimeOffset.UtcNow - this.danmakuClientConnectTime) > danmakuClientReconnectNoDelay));
+
+                this.danmakuClientConnectTime = DateTimeOffset.MaxValue;
             }
         }
 

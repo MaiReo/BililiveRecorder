@@ -4,15 +4,20 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using BililiveRecorder.Cli.Configure;
 using BililiveRecorder.Core;
 using BililiveRecorder.Core.Config;
-using BililiveRecorder.Core.Config.V2;
+using BililiveRecorder.Core.Config.V3;
 using BililiveRecorder.DependencyInjection;
 using BililiveRecorder.ToolBox;
+using BililiveRecorder.Web;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
@@ -25,17 +30,22 @@ namespace BililiveRecorder.Cli
     {
         private static async Task<int> Main(string[] args)
         {
+            ServicePointManager.Expect100Continue = false;
+
             var cmd_run = new Command("run", "Run BililiveRecorder in standard mode")
             {
+                new Option<string?>(new []{ "--web-bind", "--bind", "-b" }, () => null, "Bind address for web api"),
                 new Option<LogEventLevel>(new []{ "--loglevel", "--log", "-l" }, () => LogEventLevel.Information, "Minimal log level output to console"),
                 new Option<LogEventLevel>(new []{ "--logfilelevel", "--flog" }, () => LogEventLevel.Debug, "Minimal log level output to file"),
                 new Argument<string>("path"),
             };
             cmd_run.AddAlias("r");
-            cmd_run.Handler = CommandHandler.Create<LogEventLevel, LogEventLevel, string>(RunConfigModeAsync);
+            cmd_run.Handler = CommandHandler.Create<RunModeArguments>(RunConfigModeAsync);
 
             var cmd_portable = new Command("portable", "Run BililiveRecorder in config-less mode")
             {
+                new Option<string?>(new []{ "--web-bind", "--bind", "-b" }, () =>
+                    Environment.GetEnvironmentVariable("BREC_WEB_BIND"), "Bind address for web api"),
                 new Option<LogEventLevel>(new []{ "--loglevel", "--log", "-l" }, () => Enum.Parse<LogEventLevel>(
                     Environment.GetEnvironmentVariable("BREC_LOG_LEVEL_CONSOLE") ?? "Information"), "Minimal log level output to console"),
 
@@ -78,7 +88,7 @@ namespace BililiveRecorder.Cli
             return await root.InvokeAsync(args);
         }
 
-        private static async Task<int> RunConfigModeAsync(LogEventLevel logLevel, LogEventLevel logFileLevel, string path)
+        private static async Task<int> RunConfigModeAsync(RunModeArguments args)
         {
             bool logToFile = true;
             try
@@ -93,9 +103,10 @@ namespace BililiveRecorder.Cli
             catch
             {
             }
-            using var logger = BuildLogger(logLevel, logFileLevel, writeToFile: logToFile);
-            // Log.Logger = logger;
+            var path = Path.GetFullPath(args.Path);
 
+            using var logger = BuildLogger(args.LogLevel, args.LogFileLevel, writeToFile: logToFile);
+            Log.Logger = logger;
             path = Path.GetFullPath(path);
             var config = ConfigParser.LoadFrom(path);
             if (config is null)
@@ -107,23 +118,11 @@ namespace BililiveRecorder.Cli
             config.Global.WorkDirectory = path;
 
             var serviceProvider = BuildServiceProvider(config, logger);
-            using var recorder = serviceProvider.GetRequiredService<IRecorder>();
 
-            ConsoleCancelEventHandler? p = null;
-            using var cts = new CancellationTokenSource();
-            p = (sender, e) =>
-            {
-                Console.CancelKeyPress -= p;
-                e.Cancel = true;
-                //recorder.Dispose();
-                cts.Cancel();
-            };
-            Console.CancelKeyPress += p;
-            await Task.Delay(-1, cts.Token);
-            return 0;
+            return await RunRecorderAsync(serviceProvider, args.WebBind);
         }
 
-        private static async Task<int> RunPortableModeAsync(PortableModeArguments opts)
+        private static async Task<int> RunPortableModeAsync(PortableModeArguments args)
         {
             bool logToFile = true;
             try
@@ -138,10 +137,10 @@ namespace BililiveRecorder.Cli
             catch
             {
             }
-            using var logger = BuildLogger(opts.LogLevel, opts.LogFileLevel, writeToFile: logToFile);
+            using var logger = BuildLogger(args.LogLevel, args.LogFileLevel, writeToFile: logToFile);
             Log.Logger = logger;
 
-            var config = new ConfigV2()
+            var config = new ConfigV3()
             {
                 DisableConfigSave = true,
             };
@@ -149,48 +148,146 @@ namespace BililiveRecorder.Cli
             {
                 var global = config.Global;
 
-                if (!string.IsNullOrWhiteSpace(opts.Cookie))
-                    global.Cookie = opts.Cookie;
+                if (!string.IsNullOrWhiteSpace(args.Cookie))
+                    global.Cookie = args.Cookie;
 
-                if (!string.IsNullOrWhiteSpace(opts.LiveApiHost))
-                    global.LiveApiHost = opts.LiveApiHost;
+                if (!string.IsNullOrWhiteSpace(args.LiveApiHost))
+                    global.LiveApiHost = args.LiveApiHost;
 
-                if (!string.IsNullOrWhiteSpace(opts.FilenameFormat))
-                    global.RecordFilenameFormat = opts.FilenameFormat;
+                if (!string.IsNullOrWhiteSpace(args.Filename))
+                    global.FileNameRecordTemplate = args.Filename;
 
-                if (!string.IsNullOrWhiteSpace(opts.WebhookUrl))
-                    global.WebHookUrlsV2 = opts.WebhookUrl;
+                if (!string.IsNullOrWhiteSpace(args.WebhookUrl))
+                    global.WebHookUrlsV2 = args.WebhookUrl;
 
-                global.RecordMode = opts.RecordMode;
+                global.RecordMode = args.RecordMode;
 
-                var danmaku = opts.Danmaku;
+                var danmaku = args.Danmaku;
                 global.RecordDanmaku = danmaku != PortableModeArguments.PortableDanmakuMode.None;
                 global.RecordDanmakuSuperChat = danmaku.HasFlag(PortableModeArguments.PortableDanmakuMode.SuperChat);
                 global.RecordDanmakuGuard = danmaku.HasFlag(PortableModeArguments.PortableDanmakuMode.Guard);
                 global.RecordDanmakuGift = danmaku.HasFlag(PortableModeArguments.PortableDanmakuMode.Gift);
                 global.RecordDanmakuRaw = danmaku.HasFlag(PortableModeArguments.PortableDanmakuMode.RawData);
 
-                global.WorkDirectory = opts.OutputPath;
-                config.Rooms = opts.RoomIds.Select(x => new RoomConfig { RoomId = x, AutoRecord = true }).ToList();
+                global.WorkDirectory = Path.GetFullPath(args.OutputPath);
+                config.Rooms = args.RoomIds.Select(x => new RoomConfig { RoomId = x, AutoRecord = true }).ToList();
             }
 
             var serviceProvider = BuildServiceProvider(config, logger);
-            var recorder = serviceProvider.GetRequiredService<IRecorder>();
+
+            return await RunRecorderAsync(serviceProvider, args.WebBind);
+        }
+
+        private static async Task<int> RunRecorderAsync(IServiceProvider serviceProvider, string? webBind)
+        {
+            var logger = serviceProvider.GetRequiredService<ILogger>();
+            IRecorder recorderAccessProxy(IServiceProvider x) => serviceProvider.GetRequiredService<IRecorder>();
+
+            // recorder setup done
+            // check if web service required
+            IHost? host = null;
+            if (webBind is null)
+            {
+                logger.Information("Web API not enabled");
+            }
+            else
+            {
+                var bind = FixBindUrl(webBind, logger);
+                logger.Information("Creating web server on {BindAddress}", bind);
+
+                host = new HostBuilder()
+                    .UseSerilog(logger: logger)
+                    .ConfigureServices(services =>
+                    {
+                        services.AddSingleton(recorderAccessProxy);
+                    })
+                    .ConfigureWebHost(webBuilder =>
+                    {
+                        webBuilder
+                        .UseUrls(urls: bind)
+                        .UseKestrel(option =>
+                        {
+
+                        })
+                        .UseStartup<Startup>();
+                    })
+                    .Build();
+            }
 
             ConsoleCancelEventHandler? p = null;
             using var cts = new CancellationTokenSource();
             p = (sender, e) =>
             {
+                logger.Information("Ctrl+C pressed. Exiting");
                 Console.CancelKeyPress -= p;
                 e.Cancel = true;
                 cts.Cancel();
             };
             Console.CancelKeyPress += p;
-            await Task.Delay(-1, cts.Token);
+
+            IRecorder? recorder = null;
+
+            try
+            {
+                var token = cts.Token;
+                if (host is not null)
+                {
+                    try
+                    {
+                        await host.StartAsync(token);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Fatal(ex, "Failed to start web server.");
+                        return -1;
+                    }
+                    logger.Information("Web host started.");
+
+                    recorder = serviceProvider.GetRequiredService<IRecorder>();
+
+                    await Task.WhenAny(Task.Delay(-1, token), host.WaitForShutdownAsync()).ConfigureAwait(false);
+
+                    logger.Information("Shutdown in progress.");
+
+                    await host.StopAsync().ConfigureAwait(false);
+                }
+                else
+                {
+                    recorder = serviceProvider.GetRequiredService<IRecorder>();
+                    await Task.Delay(-1, token).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                recorder?.Dispose();
+                // TODO 修复这里 Dispose 之后不会停止房间继续初始化
+            }
+            await Task.Delay(1000 * 3).ConfigureAwait(false);
             return 0;
         }
 
-        private static IServiceProvider BuildServiceProvider(ConfigV2 config, ILogger logger) => new ServiceCollection()
+        private static string FixBindUrl(string bind, ILogger logger)
+        {
+            if (Regex.IsMatch(bind, @"^\d+$"))
+            {
+                var result = "http://localhost:" + bind;
+                logger.Warning("标准的参数格式为 {Example} 而不是只有端口号，已自动修正为 {BindUrl}", @"http://{接口地址}:{端口号}", result);
+                return result;
+            }
+            else
+            if (Regex.IsMatch(bind, @"https?:"))
+            {
+                return bind;
+            }
+            else
+            {
+                var result = "http://" + bind;
+                logger.Warning("标准的参数格式为 {Example} 而不是只有 IP 和端口号，已自动修正为 {BindUrl}", @"http://{接口地址}:{端口号}", result);
+                return result;
+            }
+        }
+
+        private static IServiceProvider BuildServiceProvider(ConfigV3 config, ILogger logger) => new ServiceCollection()
             .AddSingleton(logger)
             .AddFlv()
             .AddRecorderConfig(config)
@@ -204,6 +301,7 @@ namespace BililiveRecorder.Cli
             .Enrich.WithThreadName()
             .Enrich.FromLogContext()
             .Enrich.WithExceptionDetails()
+            .Destructure.AsScalar<IPAddress>()
             .Destructure.ByTransforming<Flv.Xml.XmlFlvFile.XmlFlvFileMeta>(x => new
             {
                 x.Version,
@@ -222,11 +320,24 @@ namespace BililiveRecorder.Cli
             )
             .CreateLogger();
 
+        public class RunModeArguments
+        {
+            public LogEventLevel LogLevel { get; set; } = LogEventLevel.Information;
+
+            public LogEventLevel LogFileLevel { get; set; } = LogEventLevel.Information;
+
+            public string? WebBind { get; set; } = null;
+
+            public string Path { get; set; } = string.Empty;
+        }
+
         public class PortableModeArguments
         {
             public LogEventLevel LogLevel { get; set; } = LogEventLevel.Information;
 
             public LogEventLevel LogFileLevel { get; set; } = LogEventLevel.Debug;
+
+            public string? WebBind { get; set; } = null;
 
             public RecordMode RecordMode { get; set; } = RecordMode.Standard;
 
@@ -236,7 +347,7 @@ namespace BililiveRecorder.Cli
 
             public string? LiveApiHost { get; set; }
 
-            public string? FilenameFormat { get; set; }
+            public string? Filename { get; set; }
 
             public string? WebhookUrl { get; set; }
 

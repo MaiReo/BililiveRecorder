@@ -4,7 +4,8 @@ import { trimEnd } from "../utils";
 export default function (data: ConfigEntry[]): string {
     let result = `using System.Collections.Generic;
     using System.ComponentModel;
-    using BililiveRecorder.Core.Config.V2;
+    using BililiveRecorder.Core.Config;
+    using BililiveRecorder.Core.Config.V3;
     
     namespace BililiveRecorder.Cli.Configure
     {`;

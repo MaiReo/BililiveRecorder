@@ -86,7 +86,9 @@ namespace BililiveRecorder.ToolBox
                     {
                         var t = ctx.AddTask(handler.Name);
                         t.MaxValue = 1d;
+#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
                         var r = await handler.Handle(request, default, async p => t.Value = p).ConfigureAwait(false);
+#pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
                         t.Value = 1d;
                         return r;
                     })

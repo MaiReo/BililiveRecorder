@@ -6,8 +6,11 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BililiveRecorder.Core.Api;
+using BililiveRecorder.Core.Config;
 using BililiveRecorder.Core.Event;
 using BililiveRecorder.Core.ProcessingRules;
+using BililiveRecorder.Core.Scripting;
+using BililiveRecorder.Core.Templating;
 using BililiveRecorder.Flv;
 using BililiveRecorder.Flv.Amf;
 using BililiveRecorder.Flv.Pipeline;
@@ -16,7 +19,7 @@ using Serilog;
 
 namespace BililiveRecorder.Core.Recording
 {
-    public class StandardRecordTask : RecordTaskBase
+    internal class StandardRecordTask : RecordTaskBase
     {
         private readonly IFlvTagReaderFactory flvTagReaderFactory;
         private readonly ITagGroupReaderFactory tagGroupReaderFactory;
@@ -39,10 +42,14 @@ namespace BililiveRecorder.Core.Recording
                           IApiClient apiClient,
                           IFlvTagReaderFactory flvTagReaderFactory,
                           ITagGroupReaderFactory tagGroupReaderFactory,
-                          IFlvProcessingContextWriterFactory writerFactory)
+                          IFlvProcessingContextWriterFactory writerFactory,
+                          FileNameGenerator fileNameGenerator,
+                          UserScriptRunner userScriptRunner)
             : base(room: room,
                    logger: logger?.ForContext<StandardRecordTask>().ForContext(LoggingContext.RoomId, room.RoomConfig.RoomId)!,
-                   apiClient: apiClient)
+                   apiClient: apiClient,
+                   fileNameGenerator: fileNameGenerator,
+                   userScriptRunner: userScriptRunner)
         {
             this.flvTagReaderFactory = flvTagReaderFactory ?? throw new ArgumentNullException(nameof(flvTagReaderFactory));
             this.tagGroupReaderFactory = tagGroupReaderFactory ?? throw new ArgumentNullException(nameof(tagGroupReaderFactory));
@@ -125,7 +132,7 @@ namespace BililiveRecorder.Core.Recording
                         if (bytesRead == 0)
                             break;
                         writer.Advance(bytesRead);
-                        Interlocked.Add(ref this.fillerDownloadedBytes, bytesRead);
+                        Interlocked.Add(ref this.ioNetworkDownloadedBytes, bytesRead);
                     }
                     catch (Exception ex)
                     {
@@ -167,7 +174,16 @@ namespace BililiveRecorder.Core.Recording
                     if (this.context.Comments.Count > 0)
                         this.logger.Debug("修复逻辑输出 {@Comments}", this.context.Comments);
 
-                    await this.writer.WriteAsync(this.context).ConfigureAwait(false);
+                    this.ioDiskStopwatch.Restart();
+                    var bytesWritten = await this.writer.WriteAsync(this.context).ConfigureAwait(false);
+                    this.ioDiskStopwatch.Stop();
+
+                    lock (this.ioDiskStatsLock)
+                    {
+                        this.ioDiskWriteDuration += this.ioDiskStopwatch.Elapsed;
+                        this.ioDiskWrittenBytes += bytesWritten;
+                    }
+                    this.ioDiskStopwatch.Reset();
 
                     if (this.context.Actions.Any(x => x is PipelineDisconnectAction))
                     {
@@ -239,12 +255,12 @@ namespace BililiveRecorder.Core.Recording
         {
             switch (this.room.RoomConfig.CuttingMode)
             {
-                case Config.V2.CuttingMode.ByTime:
+                case CuttingMode.ByTime:
                     if (e.FileMaxTimestamp > this.room.RoomConfig.CuttingNumber * (60u * 1000u))
                         this.splitFileRule.SetSplitBeforeFlag();
                     break;
-                case Config.V2.CuttingMode.BySize:
-                    if ((e.CurrentFileSize + (e.OutputVideoByteCount * 1.1) + e.OutputAudioByteCount) / (1024d * 1024d) > this.room.RoomConfig.CuttingNumber)
+                case CuttingMode.BySize:
+                    if ((e.CurrentFileSize + (e.OutputVideoBytes * 1.1) + e.OutputAudioBytes) / (1024d * 1024d) > this.room.RoomConfig.CuttingNumber)
                         this.splitFileRule.SetSplitBeforeFlag();
                     break;
             }

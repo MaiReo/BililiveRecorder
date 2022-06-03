@@ -1,23 +1,28 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Timers;
 using BililiveRecorder.Core.Api;
+using BililiveRecorder.Core.Config;
 using BililiveRecorder.Core.Event;
+using BililiveRecorder.Core.Scripting;
+using BililiveRecorder.Core.Templating;
 using Serilog;
 using Timer = System.Timers.Timer;
 
 namespace BililiveRecorder.Core.Recording
 {
-    public abstract class RecordTaskBase : IRecordTask
+    internal abstract class RecordTaskBase : IRecordTask
     {
         private const string HttpHeaderAccept = "*/*";
         private const string HttpHeaderOrigin = "https://live.bilibili.com";
         private const string HttpHeaderReferer = "https://live.bilibili.com/";
-        private const string HttpHeaderUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Safari/537.36";
+        private const string HttpHeaderUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.54 Safari/537.36";
 
         private const int timer_inverval = 2;
         protected readonly Timer timer = new Timer(1000 * timer_inverval);
@@ -28,38 +33,48 @@ namespace BililiveRecorder.Core.Recording
         protected readonly IRoom room;
         protected readonly ILogger logger;
         protected readonly IApiClient apiClient;
+        private readonly FileNameGenerator fileNameGenerator;
+        private readonly UserScriptRunner userScriptRunner;
 
         protected string? streamHost;
         protected bool started = false;
         protected bool timeoutTriggered = false;
+        protected int qn;
 
-        private readonly object fillerStatsLock = new object();
-        protected int fillerDownloadedBytes;
-        private DateTimeOffset fillerStatsLastTrigger;
+        private readonly object ioStatsLock = new();
+        protected int ioNetworkDownloadedBytes;
+
+        protected Stopwatch ioDiskStopwatch = new();
+        protected object ioDiskStatsLock = new();
+        protected TimeSpan ioDiskWriteDuration;
+        protected int ioDiskWrittenBytes;
+
+        private DateTimeOffset ioStatsLastTrigger;
         private TimeSpan durationSinceNoDataReceived;
 
-        protected RecordTaskBase(IRoom room, ILogger logger, IApiClient apiClient)
+        protected RecordTaskBase(IRoom room, ILogger logger, IApiClient apiClient, FileNameGenerator fileNameGenerator, UserScriptRunner userScriptRunner)
         {
             this.room = room ?? throw new ArgumentNullException(nameof(room));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
             this.apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
-
+            this.fileNameGenerator = fileNameGenerator ?? throw new ArgumentNullException(nameof(fileNameGenerator));
+            this.userScriptRunner = userScriptRunner ?? throw new ArgumentNullException(nameof(userScriptRunner));
             this.ct = this.cts.Token;
 
-            this.timer.Elapsed += this.Timer_Elapsed_TriggerNetworkStats;
+            this.timer.Elapsed += this.Timer_Elapsed_TriggerIOStats;
         }
 
         public Guid SessionId { get; } = Guid.NewGuid();
 
         #region Events
 
-        public event EventHandler<NetworkingStatsEventArgs>? NetworkingStats;
+        public event EventHandler<IOStatsEventArgs>? IOStats;
         public event EventHandler<RecordingStatsEventArgs>? RecordingStats;
         public event EventHandler<RecordFileOpeningEventArgs>? RecordFileOpening;
         public event EventHandler<RecordFileClosedEventArgs>? RecordFileClosed;
         public event EventHandler? RecordSessionEnded;
 
-        protected void OnNetworkingStats(NetworkingStatsEventArgs e) => NetworkingStats?.Invoke(this, e);
+        protected void OnIOStats(IOStatsEventArgs e) => IOStats?.Invoke(this, e);
         protected void OnRecordingStats(RecordingStatsEventArgs e) => RecordingStats?.Invoke(this, e);
         protected void OnRecordFileOpening(RecordFileOpeningEventArgs e) => RecordFileOpening?.Invoke(this, e);
         protected void OnRecordFileClosed(RecordFileClosedEventArgs e) => RecordFileClosed?.Invoke(this, e);
@@ -79,24 +94,16 @@ namespace BililiveRecorder.Core.Recording
 
             var (fullUrl, qn) = await this.FetchStreamUrlAsync(this.room.RoomConfig.RoomId).ConfigureAwait(false);
 
+            this.qn = qn;
             this.streamHost = new Uri(fullUrl).Host;
-            var qnDesc = qn switch
-            {
-                20000 => "4K",
-                10000 => "原画",
-                401 => "蓝光(杜比)",
-                400 => "蓝光",
-                250 => "超清",
-                150 => "高清",
-                80 => "流畅",
-                _ => "未知"
-            };
+            var qnDesc = StreamQualityNumber.MapToString(qn);
+
             this.logger.Information("连接直播服务器 {Host} 录制画质 {Qn} ({QnDescription})", this.streamHost, qn, qnDesc);
             this.logger.Debug("直播流地址 {Url}", fullUrl);
 
             var stream = await this.GetStreamAsync(fullUrl: fullUrl, timeout: (int)this.room.RoomConfig.TimingStreamConnect).ConfigureAwait(false);
 
-            this.fillerStatsLastTrigger = DateTimeOffset.UtcNow;
+            this.ioStatsLastTrigger = DateTimeOffset.UtcNow;
             this.durationSinceNoDataReceived = TimeSpan.Zero;
 
             this.ct.Register(state => Task.Run(async () =>
@@ -116,126 +123,77 @@ namespace BililiveRecorder.Core.Recording
 
         protected abstract void StartRecordingLoop(Stream stream);
 
-        private void Timer_Elapsed_TriggerNetworkStats(object sender, ElapsedEventArgs e)
+        private void Timer_Elapsed_TriggerIOStats(object sender, ElapsedEventArgs e)
         {
-            int bytes;
-            TimeSpan diff;
-            DateTimeOffset start, end;
+            int networkDownloadBytes, diskWriteBytes;
+            TimeSpan durationDiff, diskWriteDuration;
+            DateTimeOffset startTime, endTime;
 
-            lock (this.fillerStatsLock)
+
+            lock (this.ioStatsLock) // 锁 timer elapsed 事件本身防止并行运行
             {
-                bytes = Interlocked.Exchange(ref this.fillerDownloadedBytes, 0);
-                end = DateTimeOffset.UtcNow;
-                start = this.fillerStatsLastTrigger;
-                this.fillerStatsLastTrigger = end;
-                diff = end - start;
+                // networks
+                networkDownloadBytes = Interlocked.Exchange(ref this.ioNetworkDownloadedBytes, 0); // 锁网络统计
+                endTime = DateTimeOffset.UtcNow;
+                startTime = this.ioStatsLastTrigger;
+                this.ioStatsLastTrigger = endTime;
+                durationDiff = endTime - startTime;
 
-                this.durationSinceNoDataReceived = bytes > 0 ? TimeSpan.Zero : this.durationSinceNoDataReceived + diff;
+                this.durationSinceNoDataReceived = networkDownloadBytes > 0 ? TimeSpan.Zero : this.durationSinceNoDataReceived + durationDiff;
+
+                // disks
+                lock (this.ioDiskStatsLock) // 锁硬盘统计
+                {
+                    diskWriteDuration = this.ioDiskWriteDuration;
+                    diskWriteBytes = this.ioDiskWrittenBytes;
+                    this.ioDiskWriteDuration = TimeSpan.Zero;
+                    this.ioDiskWrittenBytes = 0;
+                }
             }
 
-            var mbps = bytes * (8d / 1024d / 1024d) / diff.TotalSeconds;
+            var netMbps = networkDownloadBytes * (8d / 1024d / 1024d) / durationDiff.TotalSeconds;
+            var diskMBps = diskWriteBytes / (1024d * 1024d) / diskWriteDuration.TotalSeconds;
 
-            this.OnNetworkingStats(new NetworkingStatsEventArgs
+            this.OnIOStats(new IOStatsEventArgs
             {
-                BytesDownloaded = bytes,
-                Duration = diff,
-                StartTime = start,
-                EndTime = end,
-                Mbps = mbps
+                NetworkBytesDownloaded = networkDownloadBytes,
+                Duration = durationDiff,
+                StartTime = startTime,
+                EndTime = endTime,
+                NetworkMbps = netMbps,
+                DiskBytesWritten = diskWriteBytes,
+                DiskWriteDuration = diskWriteDuration,
+                DiskMBps = diskMBps,
             });
 
             if ((!this.timeoutTriggered) && (this.durationSinceNoDataReceived.TotalMilliseconds > this.room.RoomConfig.TimingWatchdogTimeout))
             {
                 this.timeoutTriggered = true;
-                this.logger.Warning("直播服务器未断开连接但停止发送直播数据，将会主动断开连接");
+                this.logger.Warning("检测到录制卡住，可能是网络或硬盘原因，将会主动断开连接");
                 this.RequestStop();
             }
         }
 
-        #region File Name
-
-        protected (string fullPath, string relativePath) CreateFileName()
+        protected (string fullPath, string relativePath) CreateFileName() => this.fileNameGenerator.CreateFilePath(new FileNameGenerator.FileNameContextData
         {
-            var formatString = this.room.RoomConfig.RecordFilenameFormat!;
-
-            var now = DateTime.Now;
-            var date = now.ToString("yyyyMMdd");
-            var time = now.ToString("HHmmss");
-            var ms = now.ToString("fff");
-            var randomStr = this.random.Next(100, 999).ToString();
-
-            var relativePath = formatString
-                .Replace(@"{date}", date)
-                .Replace(@"{time}", time)
-                .Replace(@"{ms}", ms)
-                .Replace(@"{random}", randomStr)
-                .Replace(@"{roomid}", this.room.RoomConfig.RoomId.ToString())
-                .Replace(@"{title}", RemoveInvalidFileName(this.room.Title))
-                .Replace(@"{name}", RemoveInvalidFileName(this.room.Name))
-                .Replace(@"{parea}", RemoveInvalidFileName(this.room.AreaNameParent))
-                .Replace(@"{area}", RemoveInvalidFileName(this.room.AreaNameChild))
-                ;
-
-            if (!relativePath.EndsWith(".flv", StringComparison.OrdinalIgnoreCase))
-                relativePath += ".flv";
-
-            relativePath = RemoveInvalidFileName(relativePath, ignore_slash: true);
-            var workDirectory = this.room.RoomConfig.WorkDirectory;
-            var fullPath = Path.Combine(workDirectory, relativePath);
-            fullPath = Path.GetFullPath(fullPath);
-
-            if (!CheckIsWithinPath(workDirectory!, Path.GetDirectoryName(fullPath)))
-            {
-                this.logger.Warning("录制文件位置超出允许范围，请检查设置。将写入到默认路径。");
-                relativePath = Path.Combine(this.room.RoomConfig.RoomId.ToString(), $"{this.room.RoomConfig.RoomId}-{date}-{time}-{randomStr}.flv");
-                fullPath = Path.Combine(workDirectory, relativePath);
-            }
-
-            if (File.Exists(fullPath))
-            {
-                this.logger.Warning("录制文件名冲突，请检查设置。将写入到默认路径。");
-                relativePath = Path.Combine(this.room.RoomConfig.RoomId.ToString(), $"{this.room.RoomConfig.RoomId}-{date}-{time}-{randomStr}.flv");
-                fullPath = Path.Combine(workDirectory, relativePath);
-            }
-
-            return (fullPath, relativePath);
-        }
-
-        internal static string RemoveInvalidFileName(string input, bool ignore_slash = false)
-        {
-            foreach (var c in Path.GetInvalidFileNameChars())
-                if (!ignore_slash || c != '\\' && c != '/')
-                    input = input.Replace(c, '_');
-            return input;
-        }
-
-        internal static bool CheckIsWithinPath(string parent, string child)
-        {
-            if (parent is null || child is null)
-                return false;
-
-            parent = parent.Replace('/', '\\');
-            if (!parent.EndsWith("\\"))
-                parent += "\\";
-            parent = Path.GetFullPath(parent);
-
-            child = child.Replace('/', '\\');
-            if (!child.EndsWith("\\"))
-                child += "\\";
-            child = Path.GetFullPath(child);
-
-            return child.StartsWith(parent, StringComparison.Ordinal);
-        }
-
-        #endregion
+            Name = FileNameGenerator.RemoveInvalidFileName(this.room.Name, ignore_slash: false),
+            Title = FileNameGenerator.RemoveInvalidFileName(this.room.Title, ignore_slash: false),
+            RoomId = this.room.RoomConfig.RoomId,
+            ShortId = this.room.ShortId,
+            AreaParent = FileNameGenerator.RemoveInvalidFileName(this.room.AreaNameParent, ignore_slash: false),
+            AreaChild = FileNameGenerator.RemoveInvalidFileName(this.room.AreaNameChild, ignore_slash: false),
+            Qn = this.qn,
+            Json = this.room.RawBilibiliApiJsonData,
+        });
 
         #region Api Requests
 
-        private static HttpClient CreateHttpClient()
+        private HttpClient CreateHttpClient()
         {
             var httpClient = new HttpClient(new HttpClientHandler
             {
-                AllowAutoRedirect = false
+                AllowAutoRedirect = false,
+                UseProxy = this.room.RoomConfig.NetworkTransportUseSystemProxy,
             });
             var headers = httpClient.DefaultRequestHeaders;
             headers.Add("Accept", HttpHeaderAccept);
@@ -247,18 +205,25 @@ namespace BililiveRecorder.Core.Recording
 
         protected async Task<(string url, int qn)> FetchStreamUrlAsync(int roomid)
         {
+            var qns = this.room.RoomConfig.RecordingQuality?.Split(new[] { ',', '，', '、', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => int.TryParse(x, out var num) ? num : -1)
+                .Where(x => x > 0)
+                .ToArray()
+                ?? Array.Empty<int>();
+
+            // 优先使用用户脚本获取直播流地址
+            if (this.userScriptRunner.CallOnFetchStreamUrl(this.logger, roomid, qns) is { } urlFromScript)
+            {
+                this.logger.Information("使用用户脚本返回的直播流地址 {Url}", urlFromScript);
+                return (urlFromScript, -1);
+            }
+
             const int DefaultQn = 10000;
             var selected_qn = DefaultQn;
             var codecItem = await this.apiClient.GetCodecItemInStreamUrlAsync(roomid: roomid, qn: DefaultQn).ConfigureAwait(false);
 
             if (codecItem is null)
                 throw new Exception("no supported stream url, qn: " + DefaultQn);
-
-            var qns = this.room.RoomConfig.RecordingQuality?.Split(new[] { ',', '，', '、', ' ' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(x => int.TryParse(x, out var num) ? num : -1)
-                .Where(x => x > 0)
-                .ToArray()
-                ?? Array.Empty<int>();
 
             // Select first avaiable qn
             foreach (var qn in qns)
@@ -305,28 +270,101 @@ namespace BililiveRecorder.Core.Recording
 
         protected async Task<Stream> GetStreamAsync(string fullUrl, int timeout)
         {
-            var client = CreateHttpClient();
+            var client = this.CreateHttpClient();
 
             while (true)
             {
-                var resp = await client.GetAsync(fullUrl,
+                var allowedAddressFamily = this.room.RoomConfig.NetworkTransportAllowedAddressFamily;
+                HttpRequestMessage request;
+                Uri originalUri;
+
+                if (this.userScriptRunner.CallOnTransformStreamUrl(this.logger, fullUrl) is { } scriptResult)
+                {
+                    var (scriptUrl, scriptIp) = scriptResult;
+
+                    this.logger.Debug("用户脚本重定向了直播流地址 {NewUrl}, 旧地址 {OldUrl}", scriptUrl, fullUrl);
+
+                    fullUrl = scriptUrl;
+                    originalUri = new Uri(fullUrl);
+
+                    if (scriptIp is not null)
+                    {
+                        this.logger.Debug("用户脚本指定了服务器 IP {IP}", scriptIp);
+
+                        request = new HttpRequestMessage(HttpMethod.Get, fullUrl);
+
+                        var uri = new Uri(fullUrl);
+                        var builder = new UriBuilder(uri)
+                        {
+                            Host = scriptIp
+                        };
+
+                        request = new HttpRequestMessage(HttpMethod.Get, builder.Uri);
+                        request.Headers.Host = uri.IsDefaultPort ? uri.Host : uri.Host + ":" + uri.Port;
+
+                        goto sendRequest;
+                    }
+                }
+                else
+                {
+                    originalUri = new Uri(fullUrl);
+                }
+
+                if (allowedAddressFamily == AllowedAddressFamily.System)
+                {
+                    this.logger.Debug("NetworkTransportAllowedAddressFamily is System");
+                    request = new HttpRequestMessage(HttpMethod.Get, originalUri);
+                }
+                else
+                {
+                    var ips = await Dns.GetHostAddressesAsync(originalUri.DnsSafeHost);
+
+                    var filtered = ips.Where(x => allowedAddressFamily switch
+                    {
+                        AllowedAddressFamily.Ipv4 => x.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork,
+                        AllowedAddressFamily.Ipv6 => x.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6,
+                        AllowedAddressFamily.Any => true,
+                        _ => false
+                    }).ToArray();
+
+                    var selected = filtered[this.random.Next(filtered.Length)];
+
+                    this.logger.Debug("指定直播服务器地址 {DnsHost}: {SelectedIp}, Allowed: {AllowedAddressFamily}, {IPAddresses}", originalUri.DnsSafeHost, selected, allowedAddressFamily, ips);
+
+                    if (selected is null)
+                    {
+                        throw new Exception("DNS 没有返回符合要求的 IP 地址");
+                    }
+
+                    var builder = new UriBuilder(originalUri)
+                    {
+                        Host = selected.ToString()
+                    };
+
+                    request = new HttpRequestMessage(HttpMethod.Get, builder.Uri);
+                    request.Headers.Host = originalUri.IsDefaultPort ? originalUri.Host : originalUri.Host + ":" + originalUri.Port;
+                }
+
+            sendRequest:
+
+                var resp = await client.SendAsync(request,
                     HttpCompletionOption.ResponseHeadersRead,
                     new CancellationTokenSource(timeout).Token)
                     .ConfigureAwait(false);
 
                 switch (resp.StatusCode)
                 {
-                    case System.Net.HttpStatusCode.OK:
+                    case HttpStatusCode.OK:
                         {
                             this.logger.Information("开始接收直播流");
                             var stream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
                             return stream;
                         }
-                    case System.Net.HttpStatusCode.Moved:
-                    case System.Net.HttpStatusCode.Redirect:
+                    case HttpStatusCode.Moved:
+                    case HttpStatusCode.Redirect:
                         {
-                            fullUrl = resp.Headers.Location.OriginalString;
-                            this.logger.Debug("跳转到 {Url}", fullUrl);
+                            fullUrl = new Uri(originalUri, resp.Headers.Location).ToString();
+                            this.logger.Debug("跳转到 {Url}, 原文本 {Location}", fullUrl, resp.Headers.Location.OriginalString);
                             resp.Dispose();
                             break;
                         }
@@ -335,7 +373,6 @@ namespace BililiveRecorder.Core.Recording
                 }
             }
         }
-
         #endregion
     }
 }
