@@ -24,6 +24,7 @@ namespace BililiveRecorder.Core.Recording
         private readonly IFlvTagReaderFactory flvTagReaderFactory;
         private readonly ITagGroupReaderFactory tagGroupReaderFactory;
         private readonly IFlvProcessingContextWriterFactory writerFactory;
+        private readonly IBackgroundTaskTracer backgroundTaskTracer;
         private readonly ProcessingDelegate pipeline;
 
         private readonly IFlvWriterTargetProvider targetProvider;
@@ -45,7 +46,8 @@ namespace BililiveRecorder.Core.Recording
                           ITagGroupReaderFactory tagGroupReaderFactory,
                           IFlvProcessingContextWriterFactory writerFactory,
                           FileNameGenerator fileNameGenerator,
-                          UserScriptRunner userScriptRunner)
+                          UserScriptRunner userScriptRunner,
+                          IBackgroundTaskTracer backgroundTaskTracer)
             : base(room: room,
                    logger: logger?.ForContext<StandardRecordTask>().ForContext(LoggingContext.RoomId, room.RoomConfig.RoomId)!,
                    apiClient: apiClient,
@@ -55,6 +57,7 @@ namespace BililiveRecorder.Core.Recording
             this.flvTagReaderFactory = flvTagReaderFactory ?? throw new ArgumentNullException(nameof(flvTagReaderFactory));
             this.tagGroupReaderFactory = tagGroupReaderFactory ?? throw new ArgumentNullException(nameof(tagGroupReaderFactory));
             this.writerFactory = writerFactory ?? throw new ArgumentNullException(nameof(writerFactory));
+            this.backgroundTaskTracer = backgroundTaskTracer;
             if (builder is null)
                 throw new ArgumentNullException(nameof(builder));
 
@@ -114,8 +117,8 @@ namespace BililiveRecorder.Core.Recording
                 });
             };
 
-            BackgroundTasks.Add(Task.Run(async () => await this.FillPipeAsync(stream, pipe.Writer, cancellationToken).ConfigureAwait(false)));
-            BackgroundTasks.Add(Task.Run(async () => await this.RecordingLoopAsync(cancellationToken)));
+            backgroundTaskTracer.AddTask(Task.Run(async () => await this.FillPipeAsync(stream, pipe.Writer, cancellationToken).ConfigureAwait(false)));
+            backgroundTaskTracer.AddTask(Task.Run(async () => await this.RecordingLoopAsync(cancellationToken)));
         }
 
         private async Task FillPipeAsync(Stream stream, PipeWriter writer, CancellationToken cancellationToken)

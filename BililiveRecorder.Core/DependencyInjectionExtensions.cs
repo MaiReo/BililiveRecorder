@@ -30,6 +30,7 @@ namespace BililiveRecorder.DependencyInjection
             .AddScoped<IBasicDanmakuWriter, BasicDanmakuWriter>()
             .AddSingleton<UserScriptRunner>()
             .AddSingleton<IApplicationLifetimeAccessor>(NullApplicationLifetimeAccessor.Instance)
+            .AddSingleton<IBackgroundTaskTracer, BackgroundTaskTracer>()
             ;
 
         private static IServiceCollection AddRecorderPollyPolicy(this IServiceCollection services) => services

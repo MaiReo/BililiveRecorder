@@ -212,8 +212,6 @@ namespace BililiveRecorder.Cli
             }
 
             var host = hostBuilder.Build();
-            //using 
-            _ = host.Services.GetService<IRecorder>();
             try
             {
                 await host.RunAsync();
@@ -223,7 +221,6 @@ namespace BililiveRecorder.Cli
                 logger.Fatal(ex, "Failed to start host.");
                 return -1;
             }
-            // await Task.Delay(1000 * 3).ConfigureAwait(false);
             return 0;
         }
 

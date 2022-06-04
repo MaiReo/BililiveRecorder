@@ -11,7 +11,7 @@ namespace BililiveRecorder.Core.UnitTests.Danmaku
         [Fact(Skip = "skip")]
         public async Task TestAsync()
         {
-            var client = new DanmakuClient(new HttpApiClient(null!), null!);
+            var client = new DanmakuClient(new HttpApiClient(null!), null!, NullApplicationLifetimeAccessor.Instance);
 
             client.StatusChanged += this.Client_StatusChanged;
             client.DanmakuReceived += this.Client_DanmakuReceived;

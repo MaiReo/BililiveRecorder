@@ -22,6 +22,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
         private readonly ILogger logger;
         private readonly IDanmakuServerApiClient apiClient;
         private readonly IApplicationLifetimeAccessor applicationLifetimeAccessor;
+        private readonly IBackgroundTaskTracer backgroundTaskTracer;
         private readonly Timer timer;
         private readonly SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
 
@@ -33,10 +34,11 @@ namespace BililiveRecorder.Core.Api.Danmaku
         public event EventHandler<StatusChangedEventArgs>? StatusChanged;
         public event EventHandler<DanmakuReceivedEventArgs>? DanmakuReceived;
 
-        public DanmakuClient(IDanmakuServerApiClient apiClient, ILogger logger, IApplicationLifetimeAccessor applicationLifetimeAccessor)
+        public DanmakuClient(IDanmakuServerApiClient apiClient, ILogger logger, IApplicationLifetimeAccessor applicationLifetimeAccessor,IBackgroundTaskTracer backgroundTaskTracer)
         {
             this.apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
             this.applicationLifetimeAccessor = applicationLifetimeAccessor;
+            this.backgroundTaskTracer = backgroundTaskTracer;
             this.logger = logger?.ForContext<DanmakuClient>() ?? throw new ArgumentNullException(nameof(logger));
 
             this.timer = new Timer(interval: 1000 * 30)
@@ -104,7 +106,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
 
                 this.timer.Start();
 
-                _ = Task.Run(async () =>
+                backgroundTaskTracer.AddTask(Task.Run(async () =>
                 {
                     try
                     {
@@ -122,7 +124,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
                         await this.DisconnectAsync().ConfigureAwait(false);
                     }
                     catch (Exception) { }
-                });
+                }));
             }
             finally
             {

@@ -16,16 +16,20 @@ namespace BililiveRecorder.Core
         private readonly object lockObject = new object();
         private readonly ObservableCollection<IRoom> roomCollection;
         private readonly IRoomFactory roomFactory;
+        private readonly IBackgroundTaskTracer backgroundTaskTracer;
         private readonly ILogger logger;
         private readonly BasicWebhookV1 basicWebhookV1;
         private readonly BasicWebhookV2 basicWebhookV2;
 
         private bool disposedValue;
 
-        public Recorder(IRoomFactory roomFactory, ConfigV3 config, ILogger logger)
+        public Recorder(IRoomFactory roomFactory, ConfigV3 config,
+            IBackgroundTaskTracer backgroundTaskTracer,
+            ILogger logger)
         {
             this.roomFactory = roomFactory ?? throw new ArgumentNullException(nameof(roomFactory));
             this.Config = config ?? throw new ArgumentNullException(nameof(config));
+            this.backgroundTaskTracer = backgroundTaskTracer;
             this.logger = logger?.ForContext<Recorder>() ?? throw new ArgumentNullException(nameof(logger));
             this.roomCollection = new ObservableCollection<IRoom>();
             this.Rooms = new ReadOnlyObservableCollection<IRoom>(this.roomCollection);
@@ -148,29 +152,29 @@ namespace BililiveRecorder.Core
         private void Room_RecordFileClosed(object sender, RecordFileClosedEventArgs e)
         {
             var room = (IRoom)sender;
-            _ = Task.Run(async () => await this.basicWebhookV2.SendFileClosedAsync(e).ConfigureAwait(false));
-            _ = Task.Run(async () => await this.basicWebhookV1.SendAsync(new RecordEndData(e)).ConfigureAwait(false));
+            backgroundTaskTracer.AddTask(Task.Run(async () => await this.basicWebhookV2.SendFileClosedAsync(e).ConfigureAwait(false)));
+            backgroundTaskTracer.AddTask(Task.Run(async () => await this.basicWebhookV1.SendAsync(new RecordEndData(e)).ConfigureAwait(false)));
             RecordFileClosed?.Invoke(this, new AggregatedRoomEventArgs<RecordFileClosedEventArgs>(room, e));
         }
 
         private void Room_RecordFileOpening(object sender, RecordFileOpeningEventArgs e)
         {
             var room = (IRoom)sender;
-            _ = Task.Run(async () => await this.basicWebhookV2.SendFileOpeningAsync(e).ConfigureAwait(false));
+            backgroundTaskTracer.AddTask(Task.Run(async () => await this.basicWebhookV2.SendFileOpeningAsync(e).ConfigureAwait(false)));
             RecordFileOpening?.Invoke(this, new AggregatedRoomEventArgs<RecordFileOpeningEventArgs>(room, e));
         }
 
         private void Room_RecordSessionStarted(object sender, RecordSessionStartedEventArgs e)
         {
             var room = (IRoom)sender;
-            _ = Task.Run(async () => await this.basicWebhookV2.SendSessionStartedAsync(e).ConfigureAwait(false));
+            backgroundTaskTracer.AddTask(Task.Run(async () => await this.basicWebhookV2.SendSessionStartedAsync(e).ConfigureAwait(false)));
             RecordSessionStarted?.Invoke(this, new AggregatedRoomEventArgs<RecordSessionStartedEventArgs>(room, e));
         }
 
         private void Room_RecordSessionEnded(object sender, RecordSessionEndedEventArgs e)
         {
             var room = (IRoom)sender;
-            _ = Task.Run(async () => await this.basicWebhookV2.SendSessionEndedAsync(e).ConfigureAwait(false));
+            backgroundTaskTracer.AddTask(Task.Run(async () => await this.basicWebhookV2.SendSessionEndedAsync(e).ConfigureAwait(false)));
             RecordSessionEnded?.Invoke(this, new AggregatedRoomEventArgs<RecordSessionEndedEventArgs>(room, e));
         }
 
@@ -183,11 +187,11 @@ namespace BililiveRecorder.Core
             {
                 if (room.Streaming)
                 {
-                    _ = Task.Run(async () => await this.basicWebhookV2.SendStreamStartedAsync(new StreamStartedEventArgs(room)).ConfigureAwait(false));
+                    backgroundTaskTracer.AddTask(Task.Run(async () => await this.basicWebhookV2.SendStreamStartedAsync(new StreamStartedEventArgs(room)).ConfigureAwait(false)));
                 }
                 else
                 {
-                    _ = Task.Run(async () => await this.basicWebhookV2.SendStreamEndedAsync(new StreamEndedEventArgs(room)).ConfigureAwait(false));
+                    backgroundTaskTracer.AddTask(Task.Run(async () => await this.basicWebhookV2.SendStreamEndedAsync(new StreamEndedEventArgs(room)).ConfigureAwait(false)));
                 }
             }
             // TODO

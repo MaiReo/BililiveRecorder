@@ -31,6 +31,7 @@ namespace BililiveRecorder.Core
         private readonly IApiClient apiClient;
         private readonly IBasicDanmakuWriter basicDanmakuWriter;
         private readonly IRecordTaskFactory recordTaskFactory;
+        private readonly IBackgroundTaskTracer backgroundTaskTracer;
         private readonly IApplicationLifetimeAccessor applicationLifetimeAccessor;
 
         private ILogger logger;
@@ -50,9 +51,9 @@ namespace BililiveRecorder.Core
         private DateTimeOffset danmakuClientConnectTime;
         private static readonly TimeSpan danmakuClientReconnectNoDelay = TimeSpan.FromMinutes(1);
 
-        private Task? initTask;
-
-        public Room(IServiceScope scope, RoomConfig roomConfig, int initDelayFactor, ILogger logger, IDanmakuClient danmakuClient, IApiClient apiClient, IBasicDanmakuWriter basicDanmakuWriter, IRecordTaskFactory recordTaskFactory, IApplicationLifetimeAccessor applicationLifetimeAccessor)
+        public Room(IServiceScope scope, RoomConfig roomConfig, int initDelayFactor, ILogger logger, IDanmakuClient danmakuClient, IApiClient apiClient, IBasicDanmakuWriter basicDanmakuWriter, IRecordTaskFactory recordTaskFactory,
+            IBackgroundTaskTracer backgroundTaskTracer,
+            IApplicationLifetimeAccessor applicationLifetimeAccessor)
         {
             this.scope = scope ?? throw new ArgumentNullException(nameof(scope));
             this.RoomConfig = roomConfig ?? throw new ArgumentNullException(nameof(roomConfig));
@@ -62,6 +63,7 @@ namespace BililiveRecorder.Core
             this.apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
             this.basicDanmakuWriter = basicDanmakuWriter ?? throw new ArgumentNullException(nameof(basicDanmakuWriter));
             this.recordTaskFactory = recordTaskFactory ?? throw new ArgumentNullException(nameof(recordTaskFactory));
+            this.backgroundTaskTracer = backgroundTaskTracer;
             this.applicationLifetimeAccessor = applicationLifetimeAccessor;
             this.timer = new Timer(this.RoomConfig.TimingCheckInterval * 1000);
 
@@ -73,12 +75,12 @@ namespace BililiveRecorder.Core
             this.danmakuClient.StatusChanged += this.DanmakuClient_StatusChanged;
             this.danmakuClient.DanmakuReceived += this.DanmakuClient_DanmakuReceived;
             applicationLifetimeAccessor.ApplicationStopping.Register(() => this.timer.Stop());
-            initTask = Task.Run(async () =>
+            backgroundTaskTracer.AddTask(Task.Run(async () =>
             {
                 await Task.Delay(1500 + (initDelayFactor * 500));
                 this.timer.Start();
                 await this.RefreshRoomInfoAsync(applicationLifetimeAccessor.ApplicationStopping);
-            });
+            }));
         }
 
         public int ShortId { get => this.shortId; private set => this.SetField(ref this.shortId, value); }
@@ -130,7 +132,7 @@ namespace BililiveRecorder.Core
             {
                 this.AutoRecordForThisSession = true;
 
-                _ = Task.Run(() =>
+                backgroundTaskTracer.AddTask(Task.Run(() =>
                 {
                     try
                     {
@@ -140,7 +142,7 @@ namespace BililiveRecorder.Core
                     {
                         this.logger.Write(ex is ExecutionRejectedException ? LogEventLevel.Verbose : LogEventLevel.Warning, ex, "尝试开始录制时出错");
                     }
-                });
+                }));
             }
         }
 
@@ -229,7 +231,7 @@ namespace BililiveRecorder.Core
                 this.Stats.Reset();
                 this.OnPropertyChanged(nameof(this.Recording));
 
-                _ = Task.Run(async () =>
+                backgroundTaskTracer.AddTask(Task.Run(async () =>
                 {
                     try
                     {
@@ -242,7 +244,7 @@ namespace BililiveRecorder.Core
                         this.OnPropertyChanged(nameof(this.Recording));
 
                         // 无匹配的画质，重试录制之前等待更长时间
-                        _ = Task.Run(() => this.RestartAfterRecordTaskFailedAsync(RestartRecordingReason.NoMatchingQnValue, cancellationToken));
+                        backgroundTaskTracer.AddTask(Task.Run(() => this.RestartAfterRecordTaskFailedAsync(RestartRecordingReason.NoMatchingQnValue, cancellationToken)));
 
                         return;
                     }
@@ -254,7 +256,7 @@ namespace BililiveRecorder.Core
                         this.OnPropertyChanged(nameof(this.Recording));
 
                         // 请求直播流出错时的重试逻辑
-                        _ = Task.Run(() => this.RestartAfterRecordTaskFailedAsync(RestartRecordingReason.GenericRetry, cancellationToken));
+                        backgroundTaskTracer.AddTask(Task.Run(() => this.RestartAfterRecordTaskFailedAsync(RestartRecordingReason.GenericRetry, cancellationToken)));
 
                         return;
                     }
@@ -263,7 +265,7 @@ namespace BililiveRecorder.Core
                     {
                         SessionId = this.recordTask.SessionId
                     });
-                });
+                }));
             }
         }
 
@@ -311,13 +313,13 @@ namespace BililiveRecorder.Core
             catch (Exception ex)
             {
                 this.logger.Write(ex is ExecutionRejectedException ? LogEventLevel.Verbose : LogEventLevel.Warning, ex, "重试开始录制时出错");
-                _ = Task.Run(() => this.RestartAfterRecordTaskFailedAsync(restartRecordingReason, cancellationToken));
+                backgroundTaskTracer.AddTask(Task.Run(() => this.RestartAfterRecordTaskFailedAsync(restartRecordingReason, cancellationToken)));
             }
         }
 
         ///
         private void StartDamakuConnection(bool delay = true, CancellationToken cancellationToken = default) =>
-            Task.Run(async () =>
+            backgroundTaskTracer.AddTask(Task.Run(async () =>
             {
                 if (this.disposedValue || cancellationToken.IsCancellationRequested)
                     return;
@@ -341,7 +343,7 @@ namespace BililiveRecorder.Core
                     this.logger.Write(ex is ExecutionRejectedException ? LogEventLevel.Verbose : LogEventLevel.Warning, ex, "连接弹幕服务器时出错");
                     this.StartDamakuConnection(cancellationToken: cancellationToken);
                 }
-            });
+            }));
 
         #endregion
 
@@ -426,7 +428,7 @@ namespace BililiveRecorder.Core
                 id = this.recordTask?.SessionId ?? default;
                 this.recordTask?.Dispose();
                 this.recordTask = null;
-                _ = Task.Run(async () =>
+                backgroundTaskTracer.AddTask(Task.Run(async () =>
                 {
                     // 录制结束退出后的重试逻辑
                     // 比 RestartAfterRecordTaskFailedAsync 少了等待时间
@@ -444,9 +446,9 @@ namespace BililiveRecorder.Core
                     catch (Exception ex)
                     {
                         this.logger.Write(LogEventLevel.Warning, ex, "重试开始录制时出错");
-                        _ = Task.Run(() => this.RestartAfterRecordTaskFailedAsync(RestartRecordingReason.GenericRetry, applicationLifetimeAccessor.ApplicationStopping));
+                        backgroundTaskTracer.AddTask(Task.Run(() => this.RestartAfterRecordTaskFailedAsync(RestartRecordingReason.GenericRetry, applicationLifetimeAccessor.ApplicationStopping)));
                     }
-                });
+                }));
             }
 
             this.basicDanmakuWriter.Disable();
@@ -481,7 +483,7 @@ namespace BililiveRecorder.Core
                     break;
             }
 
-            _ = Task.Run(async () => await this.basicDanmakuWriter.WriteAsync(d, applicationLifetimeAccessor.ApplicationStopping));
+            backgroundTaskTracer.AddTask(Task.Run(async () => await this.basicDanmakuWriter.WriteAsync(d, applicationLifetimeAccessor.ApplicationStopping)));
         }
 
         private void DanmakuClient_StatusChanged(object sender, Api.Danmaku.StatusChangedEventArgs e)
@@ -515,7 +517,7 @@ namespace BililiveRecorder.Core
 
             if (this.RoomConfig.AutoRecord)
             {
-                _ = Task.Run(async () =>
+                backgroundTaskTracer.AddTask(Task.Run(async () =>
                 {
                     try
                     {
@@ -526,7 +528,7 @@ namespace BililiveRecorder.Core
                             this.CreateAndStartNewRecordTask(applicationLifetimeAccessor.ApplicationStopping);
                     }
                     catch (Exception) { }
-                });
+                }));
             }
         }
 
@@ -606,7 +608,6 @@ namespace BililiveRecorder.Core
                     this.recordTask?.Dispose();
                     this.basicDanmakuWriter.Disable();
                     this.scope.Dispose();
-                    initTask?.Wait();
                 }
 
                 // free unmanaged resources (unmanaged objects) and override finalizer

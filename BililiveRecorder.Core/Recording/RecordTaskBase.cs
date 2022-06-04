@@ -80,8 +80,6 @@ namespace BililiveRecorder.Core.Recording
 
         #endregion
 
-        protected List<Task> BackgroundTasks { get; } = new();
-
         private bool disposeValue;
 
         public virtual void Dispose()
@@ -100,21 +98,7 @@ namespace BililiveRecorder.Core.Recording
                     this.timer.Dispose();
                     this.cts.Cancel();
                     this.cts.Dispose();
-                    logger.Debug("Wait backgroud tasks to exit");
-                    try
-                    {
-                        Task.WaitAll(BackgroundTasks.ToArray());
-                        logger.Debug("background tasks exit");
-
-                    }
-                    catch (System.Exception ex)
-                    {
-                        logger.Debug(ex, "error to Wait backgroud tasks to exit");
-                    }
-                    finally
-                    {
-                        BackgroundTasks.Clear();
-                    }
+                    
                 }
             }
 
@@ -141,18 +125,6 @@ namespace BililiveRecorder.Core.Recording
 
             this.ioStatsLastTrigger = DateTimeOffset.UtcNow;
             this.durationSinceNoDataReceived = TimeSpan.Zero;
-
-            // this.ct.Register(state => Task.Run(() =>
-            // {
-            //     try
-            //     {
-            //         await Task.Delay(1000);
-            //         if (((WeakReference<Stream>)state).TryGetTarget(out var weakStream))
-            //             weakStream.Dispose();
-            //     }
-            //     catch (Exception)
-            //     { }
-            // }), state: new WeakReference<Stream>(stream), useSynchronizationContext: false);
             this.StartRecordingLoop(stream, CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.cts.Token).Token);
         }
 

@@ -15,18 +15,21 @@ namespace BililiveRecorder.Core.Recording
     internal class RawDataRecordTask : RecordTaskBase
     {
         private RecordFileOpeningEventArgs? fileOpeningEventArgs;
+        private readonly IBackgroundTaskTracer backgroundTaskTracer;
 
         public RawDataRecordTask(IRoom room,
                                  ILogger logger,
                                  IApiClient apiClient,
                                  FileNameGenerator fileNameGenerator,
-                                 UserScriptRunner userScriptRunner)
+                                 UserScriptRunner userScriptRunner,
+                                 IBackgroundTaskTracer backgroundTaskTracer)
             : base(room: room,
                    logger: logger?.ForContext<RawDataRecordTask>().ForContext(LoggingContext.RoomId, room.RoomConfig.RoomId)!,
                    apiClient: apiClient,
                    fileNameGenerator: fileNameGenerator,
                    userScriptRunner: userScriptRunner)
         {
+            this.backgroundTaskTracer = backgroundTaskTracer;
         }
 
         public override void SplitOutput() { }
@@ -56,7 +59,7 @@ namespace BililiveRecorder.Core.Recording
 
             var file = new FileStream(fullPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read | FileShare.Delete, 1024 * 8, useAsync: true);
 
-            _ = Task.Run(async () => await this.WriteStreamToFileAsync(stream, file, cancellationToken).ConfigureAwait(false));
+            backgroundTaskTracer.AddTask(Task.Run(async () => await this.WriteStreamToFileAsync(stream, file, cancellationToken).ConfigureAwait(false)));
         }
 
         private async Task ReadStreamToPipeAsync(Stream stream, PipeWriter writer, CancellationToken cancellationToken)
