@@ -1,0 +1,12 @@
+FROM mcr.microsoft.com/dotnet/sdk:6.0-alpine as tools
+RUN dotnet tool install --tool-path /tools dotnet-trace
+RUN dotnet tool install --tool-path /tools dotnet-dump
+RUN dotnet tool install --tool-path /tools dotnet-counters
+
+FROM mcr.microsoft.com/dotnet/runtime:6.0-alpine AS runtime
+COPY --from=tools /tools /tools
+
+ENV PATH="/tools:${PATH}"
+WORKDIR /tools
+ENTRYPOINT [ "/bin/ash" ]
+CMD [ "-c", "dotnet-counters ps | head -n1 | awk '{print $1}' | xargs dotnet-counters monitor -p" ]

@@ -1,7 +1,5 @@
 apiVersion: apps/v1
 kind: Deployment
-metadata:
-  annotations:
   name: brec
   namespace: default
 spec:
@@ -23,7 +21,7 @@ spec:
       - env:
         - name: BREC_ROOM_ID_LIST
           value: "23140417"
-        image: registry-vpc.cn-shanghai.aliyuncs.com/maireo95/brec:cli-1.4.1
+        image: registry-vpc.cn-shanghai.aliyuncs.com/maireo95/brec:cli-1.4.3
         imagePullPolicy: IfNotPresent
         name: brec
         resources:
@@ -33,16 +31,35 @@ spec:
           requests:
             cpu: 100m
             memory: 128Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
         volumeMounts:
+        - mountPath: /tmp
+          name: tmp
         - mountPath: /rec
           name: rec
         - mountPath: /app/logs
           name: logs
-      restartPolicy: Always
+      - image: registry-vpc.cn-shanghai.aliyuncs.com/maireo95/dotnet-sidecar-monitor:6.0
+        imagePullPolicy: IfNotPresent
+        name: toolbox
+        resources: {}
+        stdin: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        tty: true
+        volumeMounts:
+        - mountPath: /tmp
+          name: tmp
+      shareProcessNamespace: true
       volumes:
+      - emptyDir: {}
+        name: tmp
       - hostPath:
           path: /mnt/oss/yukiko-live-recording/brec
+          type: ""
         name: rec
       - hostPath:
           path: /tmp/brec/
+          type: ""
         name: logs

@@ -38,6 +38,7 @@ namespace BililiveRecorder.Flv
 
         public static async Task WriteTo(this Tag tag, Stream target, int timestamp, IMemoryStreamProvider? memoryStreamProvider = null)
         {
+            //TODO 这个地方可以用个屁的PIPE缓存
             var buffer = ArrayPool<byte>.Shared.Rent(11);
             var dispose = true;
             Stream? data = null;
@@ -105,6 +106,7 @@ namespace BililiveRecorder.Flv
 
                 BinaryPrimitives.WriteUInt32BigEndian(new Span<byte>(buffer, 0, 4), (uint)data.Length + 11);
                 await target.WriteAsync(buffer, 0, 4).ConfigureAwait(false);
+                // await target.FlushAsync();
             }
             finally
             {

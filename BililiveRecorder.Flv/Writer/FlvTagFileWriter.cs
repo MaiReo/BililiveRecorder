@@ -55,9 +55,12 @@ namespace BililiveRecorder.Flv.Writer
             if (this.disposedValue)
                 throw new ObjectDisposedException(nameof(FlvTagFileWriter));
 
-            System.Diagnostics.Debug.Assert(this.stream is null, "stream is not null");
-            this.stream?.Dispose();
-
+            System.Diagnostics.Debug.Assert(this.stream is null, "stream must be null");
+            // if (this.stream is not null)
+            // {
+            //     await this.stream.FlushAsync();
+            //     await this.stream.DisposeAsync();
+            // }
             (this.stream, this.State) = this.targetProvider.CreateOutputStream();
 
             await this.stream.WriteAsync(FLV_FILE_HEADER, 0, FLV_FILE_HEADER.Length).ConfigureAwait(false);
