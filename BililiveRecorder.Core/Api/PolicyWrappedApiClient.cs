@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using BililiveRecorder.Core.Api.Model;
 using Polly;
@@ -17,19 +18,19 @@ namespace BililiveRecorder.Core.Api
             this.policies = policies ?? throw new ArgumentNullException(nameof(policies));
         }
 
-        public async Task<BilibiliApiResponse<DanmuInfo>> GetDanmakuServerAsync(int roomid) => await this.policies
+        public async Task<BilibiliApiResponse<DanmuInfo>> GetDanmakuServerAsync(int roomid, CancellationToken cancellationToken) => await this.policies
             .Get<IAsyncPolicy>(PolicyNames.PolicyDanmakuApiRequestAsync)
-            .ExecuteAsync(_ => this.client.GetDanmakuServerAsync(roomid), new Context(PolicyNames.CacheKeyDanmaku + ":" + roomid))
+            .ExecuteAsync((_, token) => this.client.GetDanmakuServerAsync(roomid, token), new Context(PolicyNames.CacheKeyDanmaku + ":" + roomid), cancellationToken)
             .ConfigureAwait(false);
 
-        public async Task<BilibiliApiResponse<RoomInfo>> GetRoomInfoAsync(int roomid) => await this.policies
+        public async Task<BilibiliApiResponse<RoomInfo>> GetRoomInfoAsync(int roomid, CancellationToken cancellationToken) => await this.policies
             .Get<IAsyncPolicy>(PolicyNames.PolicyRoomInfoApiRequestAsync)
-            .ExecuteAsync(_ => this.client.GetRoomInfoAsync(roomid), new Context(PolicyNames.CacheKeyRoomInfo + ":" + roomid))
+            .ExecuteAsync((_, token) => this.client.GetRoomInfoAsync(roomid, token), new Context(PolicyNames.CacheKeyRoomInfo + ":" + roomid), cancellationToken)
             .ConfigureAwait(false);
 
-        public async Task<BilibiliApiResponse<RoomPlayInfo>> GetStreamUrlAsync(int roomid, int qn) => await this.policies
+        public async Task<BilibiliApiResponse<RoomPlayInfo>> GetStreamUrlAsync(int roomid, int qn, CancellationToken cancellationToken) => await this.policies
             .Get<IAsyncPolicy>(PolicyNames.PolicyStreamApiRequestAsync)
-            .ExecuteAsync(_ => this.client.GetStreamUrlAsync(roomid, qn), new Context(PolicyNames.CacheKeyStream + ":" + roomid + ":" + qn))
+            .ExecuteAsync((_, token) => this.client.GetStreamUrlAsync(roomid, qn, token), new Context(PolicyNames.CacheKeyStream + ":" + roomid + ":" + qn), cancellationToken)
             .ConfigureAwait(false);
 
         public void Dispose() => this.client.Dispose();

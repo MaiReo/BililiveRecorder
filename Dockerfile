@@ -12,7 +12,7 @@ WORKDIR /app
 RUN ln -s ./BililiveRecorder.Cli/BililiveRecorder.Cli brec
 ENV BREC_LOG_LEVEL_CONSOLE=Information \
     BREC_RECORD_MODE=Standard \
-    BREC_FILENAME_FORMAT="{roomid}/{date}-{time}-{ms}.flv" \
+    BREC_FILENAME_FORMAT='\"now\" | time_zone: \"Asia/Shanghai\" | format_date: \"yyyyMMdd-HHmmss-fff\".flv' \
     BREC_DANMAKU_MODE=7 \
     BREC_WEB_BIND="http://*:2356" \
     BREC_WORKDIR=/rec

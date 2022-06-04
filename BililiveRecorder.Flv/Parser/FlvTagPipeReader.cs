@@ -59,7 +59,7 @@ namespace BililiveRecorder.Flv.Parser
         /// <returns>解析出的 Flv Tag</returns>
         private async Task<Tag?> ReadNextTagAsync(CancellationToken cancellationToken = default)
         {
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
                 var result = await this.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
                 var buffer = result.Buffer;

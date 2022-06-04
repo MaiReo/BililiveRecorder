@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Threading;
 using System.Threading.Tasks;
 using BililiveRecorder.Core.Config.V3;
 using BililiveRecorder.Core.Event;
@@ -34,9 +35,9 @@ namespace BililiveRecorder.Core
         event EventHandler<RecordingStatsEventArgs>? RecordingStats;
         event EventHandler<IOStatsEventArgs>? IOStats;
 
-        void StartRecord();
-        void StopRecord();
+        void StartRecord(CancellationToken cancellationToken = default);
+        void StopRecord(CancellationToken cancellationToken = default);
         void SplitOutput();
-        Task RefreshRoomInfoAsync();
+        Task RefreshRoomInfoAsync(CancellationToken cancellationToken = default);
     }
 }

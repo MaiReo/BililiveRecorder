@@ -1,10 +1,11 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using BililiveRecorder.Core.Event;
 
 namespace BililiveRecorder.Core.Recording
 {
-    internal interface IRecordTask
+    internal interface IRecordTask: IDisposable
     {
         Guid SessionId { get; }
 
@@ -15,7 +16,6 @@ namespace BililiveRecorder.Core.Recording
         event EventHandler? RecordSessionEnded;
 
         void SplitOutput();
-        Task StartAsync();
-        void RequestStop();
+        Task StartAsync(CancellationToken cancellationToken);
     }
 }

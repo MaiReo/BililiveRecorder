@@ -21,6 +21,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
     {
         private readonly ILogger logger;
         private readonly IDanmakuServerApiClient apiClient;
+        private readonly IApplicationLifetimeAccessor applicationLifetimeAccessor;
         private readonly Timer timer;
         private readonly SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
 
@@ -32,9 +33,10 @@ namespace BililiveRecorder.Core.Api.Danmaku
         public event EventHandler<StatusChangedEventArgs>? StatusChanged;
         public event EventHandler<DanmakuReceivedEventArgs>? DanmakuReceived;
 
-        public DanmakuClient(IDanmakuServerApiClient apiClient, ILogger logger)
+        public DanmakuClient(IDanmakuServerApiClient apiClient, ILogger logger, IApplicationLifetimeAccessor applicationLifetimeAccessor)
         {
             this.apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
+            this.applicationLifetimeAccessor = applicationLifetimeAccessor;
             this.logger = logger?.ForContext<DanmakuClient>() ?? throw new ArgumentNullException(nameof(logger));
 
             this.timer = new Timer(interval: 1000 * 30)
@@ -47,9 +49,9 @@ namespace BililiveRecorder.Core.Api.Danmaku
 
         public async Task DisconnectAsync()
         {
-            await this.semaphoreSlim.WaitAsync().ConfigureAwait(false);
             try
             {
+                await this.semaphoreSlim.WaitAsync(applicationLifetimeAccessor.ApplicationStopping).ConfigureAwait(false);
                 this.danmakuStream?.DisposeAsync().ConfigureAwait(false);
                 this.danmakuStream = null;
 
@@ -65,12 +67,12 @@ namespace BililiveRecorder.Core.Api.Danmaku
 
         public async Task ConnectAsync(int roomid, CancellationToken cancellationToken)
         {
-            if (this.disposedValue)
+            if (this.disposedValue || cancellationToken.IsCancellationRequested)
                 throw new ObjectDisposedException(nameof(DanmakuClient));
 
-            await this.semaphoreSlim.WaitAsync().ConfigureAwait(false);
             try
             {
+                await this.semaphoreSlim.WaitAsync(cancellationToken).ConfigureAwait(false);
                 if (this.danmakuStream != null)
                     return;
 
@@ -89,8 +91,8 @@ namespace BililiveRecorder.Core.Api.Danmaku
 
                 this.danmakuStream = tcp.GetStream();
 
-                await SendHelloAsync(this.danmakuStream, roomid, token!).ConfigureAwait(false);
-                await SendPingAsync(this.danmakuStream);
+                await SendHelloAsync(this.danmakuStream, roomid, token!, cancellationToken).ConfigureAwait(false);
+                await SendPingAsync(this.danmakuStream, cancellationToken: cancellationToken).ConfigureAwait(false);
 
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -106,9 +108,10 @@ namespace BililiveRecorder.Core.Api.Danmaku
                 {
                     try
                     {
-                        await ProcessDataAsync(this.danmakuStream, this.ProcessCommand).ConfigureAwait(false);
+                        await ProcessDataAsync(this.danmakuStream, this.ProcessCommand, cancellationToken).ConfigureAwait(false);
                     }
                     catch (ObjectDisposedException) { }
+                    catch (OperationCanceledException) { }
                     catch (Exception ex)
                     {
                         this.logger.Debug(ex, "Error running ProcessDataAsync");
@@ -143,18 +146,22 @@ namespace BililiveRecorder.Core.Api.Danmaku
         }
 
 #pragma warning disable VSTHRD100 // Avoid async void methods
-        private async void SendPingMessageTimerCallback(object sender, ElapsedEventArgs e)
+        private async void SendPingMessageTimerCallback(object? sender, ElapsedEventArgs e)
 #pragma warning restore VSTHRD100 // Avoid async void methods
         {
+            if (applicationLifetimeAccessor.ApplicationStopping.IsCancellationRequested)
+            {
+                return;
+            }
             try
             {
-                await this.semaphoreSlim.WaitAsync().ConfigureAwait(false);
                 try
                 {
+                    await this.semaphoreSlim.WaitAsync(applicationLifetimeAccessor.ApplicationStopping).ConfigureAwait(false);
                     if (this.danmakuStream is null)
                         return;
 
-                    await SendPingAsync(this.danmakuStream).ConfigureAwait(false);
+                    await SendPingAsync(this.danmakuStream, applicationLifetimeAccessor.ApplicationStopping).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -176,6 +183,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
                 if (disposing)
                 {
                     // dispose managed state (managed objects)
+                    this.timer.Stop();
                     this.timer.Dispose();
                     this.danmakuStream?.Dispose();
                     this.semaphoreSlim.Dispose();
@@ -205,7 +213,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
 
         #region Send
 
-        private static Task SendHelloAsync(Stream stream, int roomid, string token) =>
+        private static Task SendHelloAsync(Stream stream, int roomid, string token, CancellationToken cancellationToken) =>
             SendMessageAsync(stream, 7, JsonConvert.SerializeObject(new
             {
                 uid = 0,
@@ -215,52 +223,55 @@ namespace BililiveRecorder.Core.Api.Danmaku
                 clientver = "2.6.25",
                 type = 2,
                 key = token,
-            }, Formatting.None));
+            }, Formatting.None), cancellationToken);
 
-        private static Task SendPingAsync(Stream stream) =>
-            SendMessageAsync(stream, 2);
+        private static Task SendPingAsync(Stream stream, CancellationToken cancellationToken) =>
+            SendMessageAsync(stream, 2, cancellationToken: cancellationToken);
 
-        private static async Task SendMessageAsync(Stream stream, int action, string body = "")
+        private static async Task SendMessageAsync(Stream stream, int action, string body = "", CancellationToken cancellationToken = default)
         {
             if (stream is null)
                 throw new ArgumentNullException(nameof(stream));
 
-            var playload = Encoding.UTF8.GetBytes(body);
-            var size = playload.Length + 16;
-            var buffer = ArrayPool<byte>.Shared.Rent(16);
-            try
-            {
-                BinaryPrimitives.WriteUInt32BigEndian(new Span<byte>(buffer, 0, 4), (uint)size);
-                BinaryPrimitives.WriteUInt16BigEndian(new Span<byte>(buffer, 4, 2), 16);
-                BinaryPrimitives.WriteUInt16BigEndian(new Span<byte>(buffer, 6, 2), 1);
-                BinaryPrimitives.WriteUInt32BigEndian(new Span<byte>(buffer, 8, 4), (uint)action);
-                BinaryPrimitives.WriteUInt32BigEndian(new Span<byte>(buffer, 12, 4), 1);
+            cancellationToken.ThrowIfCancellationRequested();
+            var payloadMaxSize = body is null ? 0 : Encoding.UTF8.GetMaxByteCount(body.Length);
+            using var payload = MemoryPool<byte>.Shared.Rent(payloadMaxSize);
+            var realPayloadSize = Encoding.UTF8.GetBytes(body, payload.Memory.Span);
+            const int headerSize = 16;
+            var size = realPayloadSize + headerSize;
+            // 返回的buffer是会大于给定的size， ArrayPool也一样
+            using var buffer = MemoryPool<byte>.Shared.Rent(headerSize);
+            BinaryPrimitives.WriteUInt32BigEndian(buffer.Memory.Slice(0, 4).Span, (uint)size);
+            BinaryPrimitives.WriteUInt16BigEndian(buffer.Memory.Slice(4, 2).Span, headerSize);
+            BinaryPrimitives.WriteUInt16BigEndian(buffer.Memory.Slice(6, 2).Span, 1);
+            BinaryPrimitives.WriteUInt32BigEndian(buffer.Memory.Slice(8, 4).Span, (uint)action);
+            BinaryPrimitives.WriteUInt32BigEndian(buffer.Memory.Slice(12, 4).Span, 1);
 
-                await stream.WriteAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
-                if (playload.Length > 0)
-                    await stream.WriteAsync(playload, 0, playload.Length).ConfigureAwait(false);
-                await stream.FlushAsync().ConfigureAwait(false);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
+            // cancellationToken触发取消时，数据是继续写入还是丢弃? 给b站服务器发送消息，那寄了就行了
+            // 官方代码的buffer.Length 是错的。要用实际数据长度 
+            await stream.WriteAsync(buffer.Memory.Slice(0, headerSize), cancellationToken).ConfigureAwait(false);
+            if (body is not null && body.Length is not 0)
+                await stream.WriteAsync(payload.Memory.Slice(0, realPayloadSize), cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
         #endregion
 
         #region Receive
 
-        private static async Task ProcessDataAsync(Stream stream, Action<string> callback)
+        private static async Task ProcessDataAsync(Stream stream, Action<string> callback, CancellationToken cancellationToken = default)
         {
             var reader = PipeReader.Create(stream);
 
-            while (true)
+            while (!cancellationToken.IsCancellationRequested)
             {
-                var result = await reader.ReadAsync();
+                var result = await reader.ReadAsync(cancellationToken);
                 var buffer = result.Buffer;
 
-                while (TryParseCommand(ref buffer, callback)) { }
+                while (TryParseCommand(ref buffer, callback))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
 
                 reader.AdvanceTo(buffer.Start, buffer.End);
 
@@ -270,7 +281,7 @@ namespace BililiveRecorder.Core.Api.Danmaku
             await reader.CompleteAsync();
         }
 
-        private static bool TryParseCommand(ref ReadOnlySequence<byte> buffer, Action<string> callback)
+        private static bool TryParseCommand(ref ReadOnlySequence<byte> buffer, in Action<string> callback)
         {
             if (buffer.Length < 4)
                 return false;
@@ -322,12 +333,8 @@ namespace BililiveRecorder.Core.Api.Danmaku
         {
             using var deflate = new DeflateStream(buffer.Slice(2, buffer.End).AsStream(), CompressionMode.Decompress, leaveOpen: false);
             var reader = PipeReader.Create(deflate);
-            while (true)
+            while (reader.TryRead(out var result))
             {
-#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-                // 全内存内运行同步返回，所以不会有问题
-                var result = reader.ReadAsync().Result;
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
                 var inner_buffer = result.Buffer;
 
                 while (TryParseCommand(ref inner_buffer, callback)) { }

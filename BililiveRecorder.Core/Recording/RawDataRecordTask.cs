@@ -1,5 +1,7 @@
 using System;
+using System.Buffers;
 using System.IO;
+using System.IO.Pipelines;
 using System.Threading;
 using System.Threading.Tasks;
 using BililiveRecorder.Core.Api;
@@ -29,12 +31,16 @@ namespace BililiveRecorder.Core.Recording
 
         public override void SplitOutput() { }
 
-        protected override void StartRecordingLoop(Stream stream)
+        protected override void StartRecordingLoop(Stream stream, CancellationToken cancellationToken)
         {
             var (fullPath, relativePath) = this.CreateFileName();
 
             try
-            { Directory.CreateDirectory(Path.GetDirectoryName(fullPath)); }
+            {
+                var dir = Path.GetDirectoryName(fullPath);
+                if (dir is not null)
+                    Directory.CreateDirectory(dir);
+            }
             catch (Exception) { }
 
             this.fileOpeningEventArgs = new RecordFileOpeningEventArgs(this.room)
@@ -48,37 +54,96 @@ namespace BililiveRecorder.Core.Recording
 
             this.logger.Information("新建录制文件 {Path}", fullPath);
 
-            var file = new FileStream(fullPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read | FileShare.Delete);
+            var file = new FileStream(fullPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read | FileShare.Delete, 1024 * 8, useAsync: true);
 
-            _ = Task.Run(async () => await this.WriteStreamToFileAsync(stream, file).ConfigureAwait(false));
+            _ = Task.Run(async () => await this.WriteStreamToFileAsync(stream, file, cancellationToken).ConfigureAwait(false));
         }
 
-        private async Task WriteStreamToFileAsync(Stream stream, FileStream file)
+        private async Task ReadStreamToPipeAsync(Stream stream, PipeWriter writer, CancellationToken cancellationToken)
+        {
+            var minimumBufferSize = 1024 * 1024 * 8;
+            Exception? exception = null;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var buffer = writer.GetMemory(minimumBufferSize);
+                    var bytesRead = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    if (bytesRead == 0)
+                    {
+                        break;
+                    }
+                    Interlocked.Add(ref this.ioNetworkDownloadedBytes, bytesRead);
+                    writer.Advance(bytesRead);
+                }
+                catch (System.Exception ex)
+                {
+                    exception = ex;
+                }
+                var result = await writer.FlushAsync(cancellationToken);
+                if (result.IsCanceled || result.IsCompleted)
+                {
+                    break;
+                }
+
+            }
+            await writer.CompleteAsync(exception);
+        }
+
+        private async Task ReadPipeToFileAsync(PipeReader reader, FileStream file, CancellationToken cancellationToken)
+        {
+            var minimumBufferSize = 1024 * 1024 * 8;
+            Exception? exception = null;
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var result = await reader.ReadAtLeastAsync(minimumBufferSize, cancellationToken);
+                    if (result.IsCanceled)
+                    {
+                        break;
+                    }
+                    var buffer = result.Buffer;
+
+                    foreach (var memory in buffer)
+                    {
+                        this.ioDiskStopwatch.Restart();
+                        await file.WriteAsync(memory, cancellationToken).ConfigureAwait(false);
+                        this.ioDiskStopwatch.Stop();
+                        Interlocked.Add(ref ioDiskWriteDurationTicks, this.ioDiskStopwatch.Elapsed.Ticks);
+                        Interlocked.Add(ref this.ioDiskWrittenBytes, memory.Length);
+                        this.ioDiskStopwatch.Reset();
+                    }
+                    reader.AdvanceTo(buffer.Start, buffer.End);
+                    if (result.IsCompleted)
+                    {
+                        break;
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    exception = ex;
+                }
+            }
+            await reader.CompleteAsync(exception);
+        }
+
+        private async Task WriteStreamToFileAsync(Stream stream, FileStream file, CancellationToken cancellationToken)
         {
             try
             {
-                var buffer = new byte[1024 * 8];
+                var pipe = new Pipe(new(
+                    resumeWriterThreshold: 1024 * 1024 * 8 * 2,
+                    pauseWriterThreshold: 1024 * 1024 * 8,
+                    useSynchronizationContext: false));
+
+                var readingStream = ReadStreamToPipeAsync(stream, pipe.Writer, cancellationToken);
+                var writingFile = ReadPipeToFileAsync(pipe.Reader, file, cancellationToken);
+
                 this.timer.Start();
 
-                while (!this.ct.IsCancellationRequested)
-                {
-                    var bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length, this.ct).ConfigureAwait(false);
-                    if (bytesRead == 0)
-                        break;
-
-                    Interlocked.Add(ref this.ioNetworkDownloadedBytes, bytesRead);
-
-                    this.ioDiskStopwatch.Restart();
-                    await file.WriteAsync(buffer, 0, bytesRead).ConfigureAwait(false);
-                    this.ioDiskStopwatch.Stop();
-
-                    lock (this.ioDiskStatsLock)
-                    {
-                        this.ioDiskWriteDuration += this.ioDiskStopwatch.Elapsed;
-                        this.ioDiskWrittenBytes += bytesRead;
-                    }
-                    this.ioDiskStopwatch.Reset();
-                }
+                await Task.WhenAll(readingStream, writingFile).ConfigureAwait(false);
             }
             catch (OperationCanceledException ex)
             {
@@ -95,7 +160,6 @@ namespace BililiveRecorder.Core.Recording
             finally
             {
                 this.timer.Stop();
-                this.RequestStop();
 
                 RecordFileClosedEventArgs? recordFileClosedEvent;
                 if (this.fileOpeningEventArgs is { } openingEventArgs)
@@ -113,12 +177,18 @@ namespace BililiveRecorder.Core.Recording
                     recordFileClosedEvent = null;
 
                 try
-                { await file.DisposeAsync().ConfigureAwait(false);  }
+                {
+                    // Writes cached contents without cancellationToken
+                    await file.FlushAsync().ConfigureAwait(false);
+                    await file.DisposeAsync().ConfigureAwait(false);
+                }
                 catch (Exception ex)
                 { this.logger.Warning(ex, "关闭文件时发生错误"); }
 
                 try
-                { await stream.DisposeAsync().ConfigureAwait(false);  }
+                {
+                    await stream.DisposeAsync().ConfigureAwait(false);
+                }
                 catch (Exception) { }
 
                 try

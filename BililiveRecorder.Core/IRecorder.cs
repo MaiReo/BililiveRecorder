@@ -22,6 +22,7 @@ namespace BililiveRecorder.Core
         IRoom AddRoom(int roomid, bool enabled);
         void RemoveRoom(IRoom room);
 
+        void LoadRoom();
         void SaveConfig();
     }
 }

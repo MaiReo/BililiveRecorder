@@ -23,6 +23,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
+using Serilog;
 
 namespace BililiveRecorder.Web
 {
@@ -102,17 +103,15 @@ namespace BililiveRecorder.Web
                     var filePath = Path.Combine(AppContext.BaseDirectory, "BililiveRecorder.Web.xml");
                     c.IncludeXmlComments(filePath);
                 })
-                .AddRouting(c =>
+
+                .PostConfigure<Microsoft.AspNetCore.Routing.RouteOptions>(c =>
                 {
                     c.LowercaseUrls = true;
                     c.LowercaseQueryStrings = true;
                 })
-                .AddMvcCore(option =>
-                {
+                .AddControllers();
 
-                })
-                .AddApiExplorer()
-                .AddNewtonsoftJson();
+            services.AddSingleton<IApplicationLifetimeAccessor, HostApplicationLifetimeAccessor>();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -121,6 +120,8 @@ namespace BililiveRecorder.Web
             const string PAGE404 = "/404.html";
 
             app.UseCors().UseWebSockets();
+
+            app.UseSerilogRequestLogging();
 
             app.Use(static next => async context =>
             {

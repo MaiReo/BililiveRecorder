@@ -106,9 +106,9 @@ namespace BililiveRecorder.Core.Danmaku
             }
         }
 
-        public async Task WriteAsync(DanmakuModel danmakuModel)
+        public async Task WriteAsync(DanmakuModel danmakuModel, CancellationToken cancellationToken)
         {
-            if (this.disposedValue)
+            if (this.disposedValue || cancellationToken.IsCancellationRequested)
                 return;
 
             if (this.xmlWriter is null || this.config is null)
@@ -120,7 +120,7 @@ namespace BililiveRecorder.Core.Danmaku
             if (!this.userScriptRunner.CallOnDanmaku(this.logger, danmakuModel.RawString))
                 return;
 
-            await this.semaphoreSlim.WaitAsync();
+            await this.semaphoreSlim.WaitAsync(cancellationToken);
             try
             {
                 if (this.xmlWriter is null)

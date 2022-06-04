@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -28,8 +29,6 @@ namespace BililiveRecorder.Core.Recording
         protected readonly Timer timer = new Timer(1000 * timer_inverval);
         protected readonly Random random = new Random();
         protected readonly CancellationTokenSource cts = new CancellationTokenSource();
-        protected readonly CancellationToken ct;
-
         protected readonly IRoom room;
         protected readonly ILogger logger;
         protected readonly IApiClient apiClient;
@@ -45,8 +44,9 @@ namespace BililiveRecorder.Core.Recording
         protected int ioNetworkDownloadedBytes;
 
         protected Stopwatch ioDiskStopwatch = new();
-        protected object ioDiskStatsLock = new();
-        protected TimeSpan ioDiskWriteDuration;
+        protected long ioDiskWriteDurationTicks;
+
+        protected TimeSpan ioDiskWriteDuration => new TimeSpan(ioDiskWriteDurationTicks);
         protected int ioDiskWrittenBytes;
 
         private DateTimeOffset ioStatsLastTrigger;
@@ -59,8 +59,6 @@ namespace BililiveRecorder.Core.Recording
             this.apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
             this.fileNameGenerator = fileNameGenerator ?? throw new ArgumentNullException(nameof(fileNameGenerator));
             this.userScriptRunner = userScriptRunner ?? throw new ArgumentNullException(nameof(userScriptRunner));
-            this.ct = this.cts.Token;
-
             this.timer.Elapsed += this.Timer_Elapsed_TriggerIOStats;
         }
 
@@ -82,17 +80,55 @@ namespace BililiveRecorder.Core.Recording
 
         #endregion
 
-        public virtual void RequestStop() => this.cts.Cancel();
+        protected List<Task> BackgroundTasks { get; } = new();
+
+        private bool disposeValue;
+
+        public virtual void Dispose()
+        {
+            Dispose(true);
+        }
+
+        private void Dispose(bool disposing)
+        {
+            if (!disposeValue)
+            {
+                disposeValue = true;
+                if (disposing)
+                {
+                    this.timer.Stop();
+                    this.timer.Dispose();
+                    this.cts.Cancel();
+                    this.cts.Dispose();
+                    logger.Debug("Wait backgroud tasks to exit");
+                    try
+                    {
+                        Task.WaitAll(BackgroundTasks.ToArray());
+                        logger.Debug("background tasks exit");
+
+                    }
+                    catch (System.Exception ex)
+                    {
+                        logger.Debug(ex, "error to Wait backgroud tasks to exit");
+                    }
+                    finally
+                    {
+                        BackgroundTasks.Clear();
+                    }
+                }
+            }
+
+        }
 
         public virtual void SplitOutput() { }
 
-        public async virtual Task StartAsync()
+        public async virtual Task StartAsync(CancellationToken cancellationToken)
         {
             if (this.started)
                 throw new InvalidOperationException("Only one StartAsync call allowed per instance.");
             this.started = true;
 
-            var (fullUrl, qn) = await this.FetchStreamUrlAsync(this.room.RoomConfig.RoomId).ConfigureAwait(false);
+            var (fullUrl, qn) = await this.FetchStreamUrlAsync(this.room.RoomConfig.RoomId, cancellationToken).ConfigureAwait(false);
 
             this.qn = qn;
             this.streamHost = new Uri(fullUrl).Host;
@@ -101,29 +137,28 @@ namespace BililiveRecorder.Core.Recording
             this.logger.Information("连接直播服务器 {Host} 录制画质 {Qn} ({QnDescription})", this.streamHost, qn, qnDesc);
             this.logger.Debug("直播流地址 {Url}", fullUrl);
 
-            var stream = await this.GetStreamAsync(fullUrl: fullUrl, timeout: (int)this.room.RoomConfig.TimingStreamConnect).ConfigureAwait(false);
+            var stream = await this.GetStreamAsync(fullUrl: fullUrl, timeout: (int)this.room.RoomConfig.TimingStreamConnect, cancellationToken).ConfigureAwait(false);
 
             this.ioStatsLastTrigger = DateTimeOffset.UtcNow;
             this.durationSinceNoDataReceived = TimeSpan.Zero;
 
-            this.ct.Register(state => Task.Run(async () =>
-            {
-                try
-                {
-                    await Task.Delay(1000);
-                    if (((WeakReference<Stream>)state).TryGetTarget(out var weakStream))
-                        await weakStream.DisposeAsync().ConfigureAwait(false);
-                }
-                catch (Exception)
-                { }
-            }), state: new WeakReference<Stream>(stream), useSynchronizationContext: false);
-
-            this.StartRecordingLoop(stream);
+            // this.ct.Register(state => Task.Run(() =>
+            // {
+            //     try
+            //     {
+            //         await Task.Delay(1000);
+            //         if (((WeakReference<Stream>)state).TryGetTarget(out var weakStream))
+            //             weakStream.Dispose();
+            //     }
+            //     catch (Exception)
+            //     { }
+            // }), state: new WeakReference<Stream>(stream), useSynchronizationContext: false);
+            this.StartRecordingLoop(stream, CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, this.cts.Token).Token);
         }
 
-        protected abstract void StartRecordingLoop(Stream stream);
+        protected abstract void StartRecordingLoop(Stream stream, CancellationToken cancellationToken);
 
-        private void Timer_Elapsed_TriggerIOStats(object sender, ElapsedEventArgs e)
+        private void Timer_Elapsed_TriggerIOStats(object? sender, ElapsedEventArgs e)
         {
             int networkDownloadBytes, diskWriteBytes;
             TimeSpan durationDiff, diskWriteDuration;
@@ -142,13 +177,10 @@ namespace BililiveRecorder.Core.Recording
                 this.durationSinceNoDataReceived = networkDownloadBytes > 0 ? TimeSpan.Zero : this.durationSinceNoDataReceived + durationDiff;
 
                 // disks
-                lock (this.ioDiskStatsLock) // 锁硬盘统计
-                {
-                    diskWriteDuration = this.ioDiskWriteDuration;
-                    diskWriteBytes = this.ioDiskWrittenBytes;
-                    this.ioDiskWriteDuration = TimeSpan.Zero;
-                    this.ioDiskWrittenBytes = 0;
-                }
+                diskWriteDuration = this.ioDiskWriteDuration;
+                diskWriteBytes = this.ioDiskWrittenBytes;
+                Interlocked.Exchange(ref this.ioDiskWriteDurationTicks, 0);
+                Interlocked.Exchange(ref this.ioDiskWrittenBytes, 0);
             }
 
             var netMbps = networkDownloadBytes * (8d / 1024d / 1024d) / durationDiff.TotalSeconds;
@@ -170,7 +202,7 @@ namespace BililiveRecorder.Core.Recording
             {
                 this.timeoutTriggered = true;
                 this.logger.Warning("检测到录制卡住，可能是网络或硬盘原因，将会主动断开连接");
-                this.RequestStop();
+                this.Dispose();
             }
         }
 
@@ -203,7 +235,7 @@ namespace BililiveRecorder.Core.Recording
             return httpClient;
         }
 
-        protected async Task<(string url, int qn)> FetchStreamUrlAsync(int roomid)
+        protected async Task<(string url, int qn)> FetchStreamUrlAsync(int roomid, CancellationToken cancellationToken)
         {
             var qns = this.room.RoomConfig.RecordingQuality?.Split(new[] { ',', '，', '、', ' ' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(x => int.TryParse(x, out var num) ? num : -1)
@@ -220,7 +252,7 @@ namespace BililiveRecorder.Core.Recording
 
             const int DefaultQn = 10000;
             var selected_qn = DefaultQn;
-            var codecItem = await this.apiClient.GetCodecItemInStreamUrlAsync(roomid: roomid, qn: DefaultQn).ConfigureAwait(false);
+            var codecItem = await this.apiClient.GetCodecItemInStreamUrlAsync(roomid: roomid, qn: DefaultQn, cancellationToken).ConfigureAwait(false);
 
             if (codecItem is null)
                 throw new Exception("no supported stream url, qn: " + DefaultQn);
@@ -244,7 +276,7 @@ namespace BililiveRecorder.Core.Recording
             if (selected_qn != DefaultQn)
             {
                 // 最终选择的 qn 与默认不同，需要重新请求一次
-                codecItem = await this.apiClient.GetCodecItemInStreamUrlAsync(roomid: roomid, qn: selected_qn).ConfigureAwait(false);
+                codecItem = await this.apiClient.GetCodecItemInStreamUrlAsync(roomid: roomid, qn: selected_qn, cancellationToken).ConfigureAwait(false);
 
                 if (codecItem is null)
                     throw new Exception("no supported stream url, qn: " + selected_qn);
@@ -268,12 +300,13 @@ namespace BililiveRecorder.Core.Recording
             return (fullUrl, codecItem.CurrentQn);
         }
 
-        protected async Task<Stream> GetStreamAsync(string fullUrl, int timeout)
+        protected async Task<Stream> GetStreamAsync(string fullUrl, int timeout, CancellationToken cancellationToken)
         {
             var client = this.CreateHttpClient();
 
             while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var allowedAddressFamily = this.room.RoomConfig.NetworkTransportAllowedAddressFamily;
                 HttpRequestMessage request;
                 Uri originalUri;
@@ -349,7 +382,8 @@ namespace BililiveRecorder.Core.Recording
 
                 var resp = await client.SendAsync(request,
                     HttpCompletionOption.ResponseHeadersRead,
-                    new CancellationTokenSource(timeout).Token)
+                    CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, new CancellationTokenSource(timeout).Token)
+                    .Token)
                     .ConfigureAwait(false);
 
                 switch (resp.StatusCode)
@@ -363,8 +397,8 @@ namespace BililiveRecorder.Core.Recording
                     case HttpStatusCode.Moved:
                     case HttpStatusCode.Redirect:
                         {
-                            fullUrl = new Uri(originalUri, resp.Headers.Location).ToString();
-                            this.logger.Debug("跳转到 {Url}, 原文本 {Location}", fullUrl, resp.Headers.Location.OriginalString);
+                            fullUrl = new Uri(originalUri, resp.Headers.Location!).ToString();
+                            this.logger.Debug("跳转到 {Url}, 原文本 {Location}", fullUrl, resp.Headers.Location!.OriginalString);
                             resp.Dispose();
                             break;
                         }

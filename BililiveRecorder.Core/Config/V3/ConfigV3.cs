@@ -16,6 +16,9 @@ namespace BililiveRecorder.Core.Config.V3
 
         [JsonIgnore]
         public bool DisableConfigSave { get; set; } = false; // for CLI
+
+        [JsonIgnore]
+        public bool DisableRoomAutoLoad { get; set; } // for CLI
     }
 
     public partial class RoomConfig

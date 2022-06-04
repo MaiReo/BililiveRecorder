@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using Jint;
@@ -100,16 +101,15 @@ namespace BililiveRecorder.Core.Scripting.Runtime
                 }
             }
 
-#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-            var resp = httpClient.SendAsync(requestMessage).Result;
+            var resp = httpClient.Send(requestMessage);
 
             if (throwOnRedirect && (resp.StatusCode is (HttpStatusCode)301 or (HttpStatusCode)302 or (HttpStatusCode)303 or (HttpStatusCode)307 or (HttpStatusCode)308))
             {
                 throw new JavaScriptException(this._engine.Realm.Intrinsics.Error, $"'Failed to fetch, Status code: {(int)resp.StatusCode}.");
             }
-
-            var respString = resp.Content.ReadAsStringAsync().Result;
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
+            using var respBody = resp.Content.ReadAsStream();
+            using var respBodyReader = new StreamReader(respBody);
+            var respString = respBodyReader.ReadToEnd();
 
             var respHeaders = new ObjectInstance(this._engine);
             foreach (var respHeader in resp.Headers)

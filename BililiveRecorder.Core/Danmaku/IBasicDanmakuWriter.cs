@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using BililiveRecorder.Core.Api.Danmaku;
 
@@ -8,6 +9,6 @@ namespace BililiveRecorder.Core.Danmaku
     {
         void Disable();
         void EnableWithPath(string path, IRoom room);
-        Task WriteAsync(DanmakuModel danmakuModel);
+        Task WriteAsync(DanmakuModel danmakuModel, CancellationToken cancellationToken);
     }
 }

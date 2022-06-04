@@ -32,18 +32,27 @@ namespace BililiveRecorder.Core
 
             this.basicWebhookV1 = new BasicWebhookV1(config);
             this.basicWebhookV2 = new BasicWebhookV2(config.Global);
-
+            if (!config.DisableRoomAutoLoad)
             {
-                logger.Debug("Recorder created with {RoomCount} rooms", config.Rooms.Count);
-                for (var i = 0; i < config.Rooms.Count; i++)
-                {
-                    var item = config.Rooms[i];
-                    if (item is not null)
-                        this.AddRoom(roomConfig: item, initDelayFactor: i);
-                }
-
-                this.SaveConfig();
+                LoadRoom();
             }
+        }
+        private bool roomLoaded;
+        public void LoadRoom()
+        {
+            if (roomLoaded)
+            {
+                return;
+            }
+            roomLoaded = true;
+            logger.Debug("Recorder created with {RoomCount} rooms", Config.Rooms.Count);
+            for (var i = 0; i < Config.Rooms.Count; i++)
+            {
+                var item = Config.Rooms[i];
+                if (item is not null)
+                    this.AddRoom(roomConfig: item, initDelayFactor: i);
+            }
+            this.SaveConfig();
         }
 
         public event EventHandler<AggregatedRoomEventArgs<RecordSessionStartedEventArgs>>? RecordSessionStarted;

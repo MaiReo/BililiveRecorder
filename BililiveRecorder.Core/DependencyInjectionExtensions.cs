@@ -29,6 +29,7 @@ namespace BililiveRecorder.DependencyInjection
             .AddSingleton<IRoomFactory, RoomFactory>()
             .AddScoped<IBasicDanmakuWriter, BasicDanmakuWriter>()
             .AddSingleton<UserScriptRunner>()
+            .AddSingleton<IApplicationLifetimeAccessor>(NullApplicationLifetimeAccessor.Instance)
             ;
 
         private static IServiceCollection AddRecorderPollyPolicy(this IServiceCollection services) => services

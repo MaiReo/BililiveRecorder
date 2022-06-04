@@ -16,6 +16,7 @@ using BililiveRecorder.DependencyInjection;
 using BililiveRecorder.ToolBox;
 using BililiveRecorder.Web;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
@@ -58,7 +59,8 @@ namespace BililiveRecorder.Cli
                     Environment.GetEnvironmentVariable("BREC_COOKIE") ??
                     "Cookie string for api requests"),
                 new Option<string>(new []{ "--filename-format", "-f" }, () =>
-                    Environment.GetEnvironmentVariable("BREC_FILENAME_FORMAT") ?? "{roomid}/{date}-{time}-{ms}.flv",
+                    Environment.GetEnvironmentVariable("BREC_FILENAME_FORMAT") ??
+                     @"{{ roomId }}/{{""now"" | time_zone: ""Asia/Shanghai"" | format_date: ""yyyyMMdd-HHmmss-fff""}}.flv",
                     "File name format"),
                 new Option<PortableModeArguments.PortableDanmakuMode>(new []{ "--danmaku", "-d" }, ()=> Enum.Parse<PortableModeArguments.PortableDanmakuMode>(
                     Environment.GetEnvironmentVariable("BREC_DANMAKU_MODE") ?? "0")
@@ -114,12 +116,11 @@ namespace BililiveRecorder.Cli
                 logger.Error("Initialize Error");
                 return -1;
             }
+            config.DisableRoomAutoLoad = true;
 
             config.Global.WorkDirectory = path;
 
-            var serviceProvider = BuildServiceProvider(config, logger);
-
-            return await RunRecorderAsync(serviceProvider, args.WebBind);
+            return await RunRecorderAsync(config, logger, args.WebBind);
         }
 
         private static async Task<int> RunPortableModeAsync(PortableModeArguments args)
@@ -142,6 +143,7 @@ namespace BililiveRecorder.Cli
 
             var config = new ConfigV3()
             {
+                DisableRoomAutoLoad = true,
                 DisableConfigSave = true,
             };
 
@@ -173,96 +175,55 @@ namespace BililiveRecorder.Cli
                 config.Rooms = args.RoomIds.Select(x => new RoomConfig { RoomId = x, AutoRecord = true }).ToList();
             }
 
-            var serviceProvider = BuildServiceProvider(config, logger);
-
-            return await RunRecorderAsync(serviceProvider, args.WebBind);
+            return await RunRecorderAsync(config, logger, args.WebBind);
         }
 
-        private static async Task<int> RunRecorderAsync(IServiceProvider serviceProvider, string? webBind)
+        private static async Task<int> RunRecorderAsync(ConfigV3 config, ILogger logger, string? webBind)
         {
-            var logger = serviceProvider.GetRequiredService<ILogger>();
-            IRecorder recorderAccessProxy(IServiceProvider x) => serviceProvider.GetRequiredService<IRecorder>();
-
             // recorder setup done
             // check if web service required
-            IHost? host = null;
-            if (webBind is null)
-            {
-                logger.Information("Web API not enabled");
-            }
-            else
+            var hostBuilder = new HostBuilder()
+                    .ConfigureAppConfiguration((host, builder) =>
+                    {
+                        builder.AddJsonFile("appsettings.json", optional: true);
+                        builder.AddJsonFile($"appsettings.{host.HostingEnvironment.EnvironmentName}.json", optional: true);
+                        builder.AddEnvironmentVariables("BREC_");
+                    })
+                    .UseSerilog(logger: logger)
+                    .ConfigureServices(services => RegisterServices(services, config, logger))
+                    ;
+
+            if (webBind is not null)
             {
                 var bind = FixBindUrl(webBind, logger);
                 logger.Information("Creating web server on {BindAddress}", bind);
-
-                host = new HostBuilder()
-                    .UseSerilog(logger: logger)
-                    .ConfigureServices(services =>
-                    {
-                        services.AddSingleton(recorderAccessProxy);
-                    })
-                    .ConfigureWebHost(webBuilder =>
-                    {
-                        webBuilder
-                        .UseUrls(urls: bind)
-                        .UseKestrel(option =>
-                        {
-
-                        })
-                        .UseStartup<Startup>();
-                    })
-                    .Build();
+                hostBuilder
+                   .ConfigureWebHost(webBuilder =>
+                   {
+                       webBuilder
+                       .UseUrls(urls: bind)
+                       .UseKestrel()
+                       .UseStartup<Startup>();
+                   });
+            }
+            else
+            {
+                hostBuilder.UseConsoleLifetime();
             }
 
-            ConsoleCancelEventHandler? p = null;
-            using var cts = new CancellationTokenSource();
-            p = (sender, e) =>
-            {
-                logger.Information("Ctrl+C pressed. Exiting");
-                Console.CancelKeyPress -= p;
-                e.Cancel = true;
-                cts.Cancel();
-            };
-            Console.CancelKeyPress += p;
-
-            IRecorder? recorder = null;
-
+            var host = hostBuilder.Build();
+            //using 
+            _ = host.Services.GetService<IRecorder>();
             try
             {
-                var token = cts.Token;
-                if (host is not null)
-                {
-                    try
-                    {
-                        await host.StartAsync(token);
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.Fatal(ex, "Failed to start web server.");
-                        return -1;
-                    }
-                    logger.Information("Web host started.");
-
-                    recorder = serviceProvider.GetRequiredService<IRecorder>();
-
-                    await host.WaitForShutdownAsync(token).ConfigureAwait(false);
-
-                    logger.Information("Shutdown in progress.");
-
-                    await host.StopAsync(token).ConfigureAwait(false);
-                }
-                else
-                {
-                    recorder = serviceProvider.GetRequiredService<IRecorder>();
-                    await Task.Delay(-1, token).ConfigureAwait(false);
-                }
+                await host.RunAsync();
             }
-            finally
+            catch (Exception ex)
             {
-                recorder?.Dispose();
-                // TODO 修复这里 Dispose 之后不会停止房间继续初始化
+                logger.Fatal(ex, "Failed to start host.");
+                return -1;
             }
-            await Task.Delay(1000 * 3).ConfigureAwait(false);
+            // await Task.Delay(1000 * 3).ConfigureAwait(false);
             return 0;
         }
 
@@ -287,12 +248,14 @@ namespace BililiveRecorder.Cli
             }
         }
 
-        private static IServiceProvider BuildServiceProvider(ConfigV3 config, ILogger logger) => new ServiceCollection()
+        private static IServiceCollection RegisterServices(IServiceCollection services, ConfigV3 config, ILogger logger) => services
             .AddSingleton(logger)
             .AddFlv()
             .AddRecorderConfig(config)
             .AddRecorder()
-            .BuildServiceProvider();
+            .AddSingleton<IApplicationLifetimeAccessor, HostApplicationLifetimeAccessor>()
+            .AddHostedService<BootStrapRecorderService>()
+            ;
 
         private static Logger BuildLogger(LogEventLevel logLevel, LogEventLevel logFileLevel, bool writeToFile = true, bool writeToFileAsync = true) => new LoggerConfiguration()
             .MinimumLevel.Verbose()
@@ -310,7 +273,7 @@ namespace BililiveRecorder.Cli
                 x.FileCreationTime,
                 x.FileModificationTime,
             })
-            .WriteTo.Console(restrictedToMinimumLevel: logLevel, outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{RoomId}] {Message:lj}{NewLine}{Exception}")
+            .WriteTo.Console(restrictedToMinimumLevel: logLevel, outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss:zz} {Level:u3}] [{RoomId}] {Message:lj}{NewLine}{Exception}")
             .When(writeToFile, x =>
                 x.When(writeToFileAsync,
                     y => y.WriteTo.Async(a => a.File(

@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using static BililiveRecorder.Core.Api.Model.RoomPlayInfo;
 
@@ -7,9 +8,9 @@ namespace BililiveRecorder.Core.Api
 {
     internal static class IApiClientExtensions
     {
-        public static async Task<CodecItem?> GetCodecItemInStreamUrlAsync(this IApiClient apiClient, int roomid, int qn)
+        public static async Task<CodecItem?> GetCodecItemInStreamUrlAsync(this IApiClient apiClient, int roomid, int qn, CancellationToken cancellationToken)
         {
-            var apiResp = await apiClient.GetStreamUrlAsync(roomid: roomid, qn: qn).ConfigureAwait(false);
+            var apiResp = await apiClient.GetStreamUrlAsync(roomid: roomid, qn: qn, cancellationToken).ConfigureAwait(false);
             var url_data = apiResp?.Data?.PlayurlInfo?.Playurl?.Streams;
 
             if (url_data is null)

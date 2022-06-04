@@ -70,24 +70,24 @@ namespace BililiveRecorder.Core.Api.Http
             old?.Dispose();
         }
 
-        private void Config_PropertyChanged(object sender, PropertyChangedEventArgs e)
+        private void Config_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(this.config.Cookie))
                 this.SetCookie();
         }
 
-        private static async Task<BilibiliApiResponse<T>> FetchAsync<T>(HttpClient client, string url) where T : class
+        private static async Task<BilibiliApiResponse<T>> FetchAsync<T>(HttpClient client, string url, CancellationToken cancellationToken = default) where T : class
         {
             // 记得 GetRoomInfoAsync 里复制了一份这里的代码，以后修改记得一起改了
 
-            var resp = await client.GetAsync(url).ConfigureAwait(false);
+            var resp = await client.GetAsync(url, cancellationToken).ConfigureAwait(false);
 
-            if (resp.StatusCode == (HttpStatusCode)412)
+            if (resp.StatusCode == HttpStatusCode.PreconditionFailed)
                 throw new Http412Exception("Got HTTP Status 412 when requesting " + url);
 
             resp.EnsureSuccessStatusCode();
 
-            var text = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var text = await resp.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
             var obj = JsonConvert.DeserializeObject<BilibiliApiResponse<T>>(text);
             if (obj?.Code != 0)
@@ -95,8 +95,10 @@ namespace BililiveRecorder.Core.Api.Http
             return obj;
         }
 
-        public async Task<BilibiliApiResponse<RoomInfo>> GetRoomInfoAsync(int roomid)
+        public async Task<BilibiliApiResponse<RoomInfo>> GetRoomInfoAsync(int roomid, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (this.disposedValue)
                 throw new ObjectDisposedException(nameof(HttpApiClient));
 
@@ -106,14 +108,14 @@ namespace BililiveRecorder.Core.Api.Http
             // 下面的代码是从 FetchAsync 里复制修改的
             // 以后如果修改 FetchAsync 记得把这里也跟着改了
 
-            var resp = await this.mainClient.GetAsync(url).ConfigureAwait(false);
+            var resp = await this.mainClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
 
-            if (resp.StatusCode == (HttpStatusCode)412)
+            if (resp.StatusCode == HttpStatusCode.PreconditionFailed)
                 throw new Http412Exception("Got HTTP Status 412 when requesting " + url);
 
             resp.EnsureSuccessStatusCode();
 
-            var text = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var text = await resp.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
             var jobject = JObject.Parse(text);
 
@@ -126,22 +128,24 @@ namespace BililiveRecorder.Core.Api.Http
             return obj;
         }
 
-        public Task<BilibiliApiResponse<RoomPlayInfo>> GetStreamUrlAsync(int roomid, int qn)
+        public Task<BilibiliApiResponse<RoomPlayInfo>> GetStreamUrlAsync(int roomid, int qn, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (this.disposedValue)
                 throw new ObjectDisposedException(nameof(HttpApiClient));
 
             var url = $@"{this.config.LiveApiHost}/xlive/web-room/v2/index/getRoomPlayInfo?room_id={roomid}&protocol=0,1&format=0,1,2&codec=0,1&qn={qn}&platform=web&ptype=8";
-            return FetchAsync<RoomPlayInfo>(this.mainClient, url);
+            return FetchAsync<RoomPlayInfo>(this.mainClient, url, cancellationToken);
         }
 
-        public Task<BilibiliApiResponse<DanmuInfo>> GetDanmakuServerAsync(int roomid)
+        public Task<BilibiliApiResponse<DanmuInfo>> GetDanmakuServerAsync(int roomid, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (this.disposedValue)
                 throw new ObjectDisposedException(nameof(HttpApiClient));
 
             var url = $@"{this.config.LiveApiHost}/xlive/web-room/v1/index/getDanmuInfo?id={roomid}&type=0";
-            return FetchAsync<DanmuInfo>(this.anonClient, url);
+            return FetchAsync<DanmuInfo>(this.anonClient, url, cancellationToken);
         }
 
         protected virtual void Dispose(bool disposing)

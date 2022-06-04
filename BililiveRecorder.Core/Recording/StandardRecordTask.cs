@@ -35,6 +35,7 @@ namespace BililiveRecorder.Core.Recording
 
         private ITagGroupReader? reader;
         private IFlvProcessingContextWriter? writer;
+        
 
         public StandardRecordTask(IRoom room,
                           ILogger logger,
@@ -87,9 +88,12 @@ namespace BililiveRecorder.Core.Recording
 
         public override void SplitOutput() => this.splitFileRule.SetSplitBeforeFlag();
 
-        protected override void StartRecordingLoop(Stream stream)
+        protected override void StartRecordingLoop(Stream stream, CancellationToken cancellationToken)
         {
-            var pipe = new Pipe(new PipeOptions(useSynchronizationContext: false));
+            var pipe = new Pipe(new PipeOptions(
+                pauseWriterThreshold: 1024 * 1024 * 16,
+                resumeWriterThreshold: 1024 * 1024 * 8,
+                useSynchronizationContext: false));
 
             this.reader = this.tagGroupReaderFactory.CreateTagGroupReader(this.flvTagReaderFactory.CreateFlvTagReader(pipe.Reader));
 
@@ -110,25 +114,24 @@ namespace BililiveRecorder.Core.Recording
                 });
             };
 
-            _ = Task.Run(async () => await this.FillPipeAsync(stream, pipe.Writer).ConfigureAwait(false));
-
-            _ = Task.Run(this.RecordingLoopAsync);
+            BackgroundTasks.Add(Task.Run(async () => await this.FillPipeAsync(stream, pipe.Writer, cancellationToken).ConfigureAwait(false)));
+            BackgroundTasks.Add(Task.Run(async () => await this.RecordingLoopAsync(cancellationToken)));
         }
 
-        private async Task FillPipeAsync(Stream stream, PipeWriter writer)
+        private async Task FillPipeAsync(Stream stream, PipeWriter writer, CancellationToken cancellationToken)
         {
-            const int minimumBufferSize = 1024;
+            const int minimumBufferSize = 1024 * 1024 * 8;
             this.timer.Start();
 
             Exception? exception = null;
             try
             {
-                while (!this.ct.IsCancellationRequested)
+                while (!cancellationToken.IsCancellationRequested)
                 {
                     var memory = writer.GetMemory(minimumBufferSize);
                     try
                     {
-                        var bytesRead = await stream.ReadAsync(memory, this.ct).ConfigureAwait(false);
+                        var bytesRead = await stream.ReadAsync(memory, cancellationToken).ConfigureAwait(false);
                         if (bytesRead == 0)
                             break;
                         writer.Advance(bytesRead);
@@ -140,8 +143,8 @@ namespace BililiveRecorder.Core.Recording
                         break;
                     }
 
-                    var result = await writer.FlushAsync(this.ct).ConfigureAwait(false);
-                    if (result.IsCompleted)
+                    var result = await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    if (result.IsCanceled || result.IsCompleted)
                         break;
                 }
             }
@@ -153,16 +156,16 @@ namespace BililiveRecorder.Core.Recording
             }
         }
 
-        private async Task RecordingLoopAsync()
+        private async Task RecordingLoopAsync(CancellationToken cancellationToken)
         {
             try
             {
                 if (this.reader is null) return;
                 if (this.writer is null) return;
 
-                while (!this.ct.IsCancellationRequested)
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    var group = await this.reader.ReadGroupAsync(this.ct).ConfigureAwait(false);
+                    var group = await this.reader.ReadGroupAsync(cancellationToken).ConfigureAwait(false);
 
                     if (group is null)
                         break;
@@ -178,11 +181,9 @@ namespace BililiveRecorder.Core.Recording
                     var bytesWritten = await this.writer.WriteAsync(this.context).ConfigureAwait(false);
                     this.ioDiskStopwatch.Stop();
 
-                    lock (this.ioDiskStatsLock)
-                    {
-                        this.ioDiskWriteDuration += this.ioDiskStopwatch.Elapsed;
-                        this.ioDiskWrittenBytes += bytesWritten;
-                    }
+                    Interlocked.Add(ref ioDiskWriteDurationTicks, this.ioDiskStopwatch.Elapsed.Ticks);
+                    Interlocked.Add(ref this.ioDiskWrittenBytes, bytesWritten);
+
                     this.ioDiskStopwatch.Reset();
 
                     if (this.context.Actions.Any(x => x is PipelineDisconnectAction))
@@ -210,7 +211,7 @@ namespace BililiveRecorder.Core.Recording
                 this.reader = null;
                 this.writer?.Dispose();
                 this.writer = null;
-                this.RequestStop();
+                // this.RequestStop();
 
                 this.OnRecordSessionEnded(EventArgs.Empty);
 
@@ -251,7 +252,7 @@ namespace BililiveRecorder.Core.Recording
             }
         }
 
-        private void StatsRule_StatsUpdated(object sender, RecordingStatsEventArgs e)
+        private void StatsRule_StatsUpdated(object? sender, RecordingStatsEventArgs e)
         {
             switch (this.room.RoomConfig.CuttingMode)
             {
@@ -286,13 +287,17 @@ namespace BililiveRecorder.Core.Recording
                 var paths = this.task.CreateFileName();
 
                 try
-                { Directory.CreateDirectory(Path.GetDirectoryName(paths.fullPath)); }
+                {
+                    var dir = Path.GetDirectoryName(paths.fullPath);
+                    if (dir is not null)
+                        Directory.CreateDirectory(dir);
+                }
                 catch (Exception) { }
 
                 this.last_path = paths.fullPath;
                 var state = this.OnNewFile(paths);
 
-                var stream = new FileStream(paths.fullPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read | FileShare.Delete);
+                var stream = new FileStream(paths.fullPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read | FileShare.Delete, bufferSize: 4096, useAsync: true);
                 return (stream, state);
             }
 
@@ -302,8 +307,16 @@ namespace BililiveRecorder.Core.Recording
                     ? Path.ChangeExtension(this.task.CreateFileName().fullPath, "headers.txt")
                     : Path.ChangeExtension(this.last_path, "headers.txt");
 
+                if (path is null)
+                {
+                    throw new NotImplementedException();
+                }
                 try
-                { Directory.CreateDirectory(Path.GetDirectoryName(path)); }
+                {
+                    var dir = Path.GetDirectoryName(path);
+                    if (dir is not null)
+                        Directory.CreateDirectory(dir);
+                }
                 catch (Exception) { }
 
                 var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);

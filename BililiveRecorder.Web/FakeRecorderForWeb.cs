@@ -63,5 +63,7 @@ namespace BililiveRecorder.Web
             this.Dispose(disposing: true);
             GC.SuppressFinalize(this);
         }
+
+        public void LoadRoom() => throw new NotSupportedException();
     }
 }
