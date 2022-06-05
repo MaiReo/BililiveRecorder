@@ -21,6 +21,8 @@ spec:
       - env:
         - name: BREC_ROOM_ID_LIST
           value: "23140417"
+        - name: BREC_FILENAME_FORMAT
+          value: '{{ roomId }}/{{"now" | time_zone: "Asia/Shanghai" | format_date: "yyyyMMdd-HHmmss-fff"}}.flv'
         image: registry-vpc.cn-shanghai.aliyuncs.com/maireo95/brec:cli-1.4.3
         imagePullPolicy: IfNotPresent
         name: brec

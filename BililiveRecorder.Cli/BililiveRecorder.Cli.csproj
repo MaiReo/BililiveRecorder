@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk">
   
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -22,6 +22,8 @@
   <ItemGroup>
     <PackageReference Include="KubernetesClient" Version="8.0.6" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="6.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="6.0.*" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="4.2.*" />
     <PackageReference Include="Serilog" Version="2.10.*" />
     <PackageReference Include="Serilog.Enrichers.Process" Version="2.0.*" />
     <PackageReference Include="Serilog.Enrichers.Thread" Version="3.1.*" />
@@ -36,7 +38,7 @@
   <ItemGroup>
     <ProjectReference Include="..\BililiveRecorder.Core\BililiveRecorder.Core.csproj" />
     <ProjectReference Include="..\BililiveRecorder.ToolBox\BililiveRecorder.ToolBox.csproj" />
-    <ProjectReference Include="..\BililiveRecorder.Web\BililiveRecorder.Web.csproj" />
+    <!-- <ProjectReference Include="..\BililiveRecorder.Web\BililiveRecorder.Web.csproj" /> -->
   </ItemGroup>
   
 </Project>

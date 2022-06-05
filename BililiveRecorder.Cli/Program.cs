@@ -14,8 +14,8 @@ using BililiveRecorder.Core.Config;
 using BililiveRecorder.Core.Config.V3;
 using BililiveRecorder.DependencyInjection;
 using BililiveRecorder.ToolBox;
-using BililiveRecorder.Web;
-using Microsoft.AspNetCore.Hosting;
+// using BililiveRecorder.Web;
+// using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -45,8 +45,8 @@ namespace BililiveRecorder.Cli
 
             var cmd_portable = new Command("portable", "Run BililiveRecorder in config-less mode")
             {
-                new Option<string?>(new []{ "--web-bind", "--bind", "-b" }, () =>
-                    Environment.GetEnvironmentVariable("BREC_WEB_BIND"), "Bind address for web api"),
+                // new Option<string?>(new []{ "--web-bind", "--bind", "-b" }, () =>
+                //     Environment.GetEnvironmentVariable("BREC_WEB_BIND"), "Bind address for web api"),
                 new Option<LogEventLevel>(new []{ "--loglevel", "--log", "-l" }, () => Enum.Parse<LogEventLevel>(
                     Environment.GetEnvironmentVariable("BREC_LOG_LEVEL_CONSOLE") ?? "Information"), "Minimal log level output to console"),
 
@@ -185,31 +185,29 @@ namespace BililiveRecorder.Cli
             var hostBuilder = new HostBuilder()
                     .ConfigureAppConfiguration((host, builder) =>
                     {
-                        builder.AddJsonFile("appsettings.json", optional: true);
-                        builder.AddJsonFile($"appsettings.{host.HostingEnvironment.EnvironmentName}.json", optional: true);
                         builder.AddEnvironmentVariables("BREC_");
                     })
                     .UseSerilog(logger: logger)
                     .ConfigureServices(services => RegisterServices(services, config, logger))
                     ;
 
-            if (webBind is not null)
-            {
-                var bind = FixBindUrl(webBind, logger);
-                logger.Information("Creating web server on {BindAddress}", bind);
-                hostBuilder
-                   .ConfigureWebHost(webBuilder =>
-                   {
-                       webBuilder
-                       .UseUrls(urls: bind)
-                       .UseKestrel()
-                       .UseStartup<Startup>();
-                   });
-            }
-            else
-            {
+            // if (webBind is not null)
+            // {
+            //     var bind = FixBindUrl(webBind, logger);
+            //     logger.Information("Creating web server on {BindAddress}", bind);
+            //     hostBuilder
+            //        .ConfigureWebHost(webBuilder =>
+            //        {
+            //            webBuilder
+            //            .UseUrls(urls: bind)
+            //            .UseKestrel()
+            //            .UseStartup<Startup>();
+            //        });
+            // }
+            // else
+            // {
                 hostBuilder.UseConsoleLifetime();
-            }
+            // }
 
             var host = hostBuilder.Build();
             try
