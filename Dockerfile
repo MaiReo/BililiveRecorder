@@ -2,7 +2,8 @@ FROM mcr.microsoft.com/dotnet/sdk:6.0-alpine
 COPY . /src
 RUN cd /src/BililiveRecorder.Cli && dotnet build -o /output -c Release
 
-FROM mcr.microsoft.com/dotnet/aspnet:6.0-alpine
+# FROM mcr.microsoft.com/dotnet/aspnet:6.0-alpine
+FROM mcr.microsoft.com/dotnet/runtime:6.0-alpine
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories
 RUN apk add --no-cache tzdata ca-certificates
 ENV TZ=Asia/Shanghai
